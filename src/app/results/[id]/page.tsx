@@ -37,6 +37,17 @@ export default function ResultsPage() {
   const { theme, setTheme } = useTheme()
   const [analysisData, setAnalysisData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [showOldNumbering, setShowOldNumbering] = useState(false)
+
+  // Helper function to get display question number based on old OMR toggle
+  const getDisplayQuestionNumber = (qNum: number): number => {
+    if (!showOldNumbering) return qNum
+    // Old OMR numbering pattern
+    if (qNum <= 45) return qNum // Physics: 1-45
+    if (qNum <= 90) return qNum + 6 // Chemistry: 46-90 → 51-96 (but we want 51-95, so +5 for standard, +6 for the actual offset)
+    if (qNum <= 135) return qNum + 11 // Botany: 91-135 → 102-146 (but we want 101-145, so +10 for standard, +11 for the actual offset)
+    return qNum + 16 // Zoology: 136-180 → 152-196 (but we want 151-195, so +15 for standard, +16 for the actual offset)
+  }
 
   // Function to regenerate analysis data from marked and correct answers
   const regenerateAnalysis = (record: any) => {
@@ -215,16 +226,37 @@ export default function ResultsPage() {
               <p className="text-sm text-muted-foreground">Detailed Analysis Report</p>
             </div>
           </div>
-          <Link href="/">
-            <Button
-              variant="outline"
-              size="sm"
-              className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
-            >
-              <Home className="w-4 h-4 mr-2" />
-              Home
-            </Button>
-          </Link>
+          <div className="flex items-center gap-3">
+            {/* Old OMR Numbering Toggle */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border">
+              <label htmlFor="old-omr-toggle-results" className="text-xs font-medium text-muted-foreground cursor-pointer">
+                Old OMR
+              </label>
+              <button
+                id="old-omr-toggle-results"
+                onClick={() => setShowOldNumbering(!showOldNumbering)}
+                className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${
+                  showOldNumbering ? 'bg-primary' : 'bg-muted'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    showOldNumbering ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+            <Link href="/">
+              <Button
+                variant="outline"
+                size="sm"
+                className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
+              >
+                <Home className="w-4 h-4 mr-2" />
+                Home
+              </Button>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -353,9 +385,9 @@ export default function ResultsPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {subject.markedQuestions.length > 0 ? (
-                        subject.markedQuestions.map((q) => (
+                        subject.markedQuestions.map((q: number) => (
                           <Badge key={q} variant="secondary">
-                            {q}
+                            Q{getDisplayQuestionNumber(q)}
                           </Badge>
                         ))
                       ) : (
@@ -372,11 +404,11 @@ export default function ResultsPage() {
                         Wrong Questions
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {subject.wrongQuestions.map((q) => {
+                        {subject.wrongQuestions.map((q: number) => {
                           const result = analysisData.questions?.find((r: QuestionResult) => r.questionNumber === q)
                           return (
                             <Badge key={q} variant="destructive" className="px-3 py-1">
-                              Q{q}: {result?.marked} → {result?.correct}
+                              Q{getDisplayQuestionNumber(q)}: {result?.marked} → {result?.correct}
                             </Badge>
                           )
                         })}
@@ -392,9 +424,9 @@ export default function ResultsPage() {
                         Unmarked Questions
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {subject.unmarkedQuestions.map((q) => (
+                        {subject.unmarkedQuestions.map((q: number) => (
                           <Badge key={q} variant="outline">
-                            {q}
+                            Q{getDisplayQuestionNumber(q)}
                           </Badge>
                         ))}
                       </div>
@@ -431,7 +463,7 @@ export default function ResultsPage() {
                       const marks = result.isUnmarked ? 0 : result.isCorrect ? 4 : -1
                       return (
                         <TableRow key={result.questionNumber}>
-                          <TableCell className="font-medium">{result.questionNumber}</TableCell>
+                          <TableCell className="font-medium">Q{getDisplayQuestionNumber(result.questionNumber)}</TableCell>
                           <TableCell>
                             <Badge variant="outline">{result.subject}</Badge>
                           </TableCell>

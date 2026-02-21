@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Home, Check, X, TrendingUp, Award, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Home, Check, X, TrendingUp, Award, AlertCircle, Layers } from 'lucide-react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import { Moon, Sun } from 'lucide-react'
@@ -226,42 +226,93 @@ export default function ResultsPage() {
               <p className="text-sm text-muted-foreground">Detailed Analysis Report</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Old OMR Numbering Toggle */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border">
-              <label htmlFor="old-omr-toggle-results" className="text-xs font-medium text-muted-foreground cursor-pointer">
-                Old OMR
-              </label>
-              <button
-                id="old-omr-toggle-results"
-                onClick={() => setShowOldNumbering(!showOldNumbering)}
-                className={`relative w-10 h-5 rounded-full transition-colors duration-200 ${
-                  showOldNumbering ? 'bg-primary' : 'bg-muted'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                    showOldNumbering ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-            <Link href="/">
-              <Button
-                variant="outline"
-                size="sm"
-                className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
-              >
-                <Home className="w-4 h-4 mr-2" />
-                Home
-              </Button>
-            </Link>
-          </div>
+          <Link href="/">
+            <Button
+              variant="outline"
+              size="sm"
+              className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
+            >
+              <Home className="w-4 h-4 mr-2" />
+              Home
+            </Button>
+          </Link>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* Question Numbering Toggle - Sleek Card */}
+        <Card className={`border-2 transition-all duration-300 hover:shadow-lg ${
+          showOldNumbering ? 'bg-gradient-to-r from-amber-500/5 to-orange-500/5 border-amber-500/30' : 'border-border'
+        }`}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${
+                  showOldNumbering
+                    ? 'bg-gradient-to-br from-amber-500 to-orange-500 shadow-lg shadow-amber-500/25'
+                    : 'bg-muted'
+                }`}>
+                  <Layers className={`w-5 h-5 transition-all duration-300 ${
+                    showOldNumbering ? 'text-white' : 'text-muted-foreground'
+                  }`} />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm">Question Numbering</div>
+                  <div className={`text-xs transition-all duration-300 ${
+                    showOldNumbering
+                      ? 'text-amber-600 dark:text-amber-400 font-medium'
+                      : 'text-muted-foreground'
+                  }`}>
+                    {showOldNumbering
+                      ? 'Old OMR Pattern: 1-45, 51-95, 101-145, 151-195'
+                      : 'Standard: 1-180 (Sequential)'
+                    }
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowOldNumbering(!showOldNumbering)}
+                className={`relative w-14 h-7 rounded-full transition-all duration-300 shadow-sm ${
+                  showOldNumbering
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-500 shadow-lg shadow-amber-500/25'
+                    : 'bg-muted hover:bg-muted/80'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 flex items-center justify-center ${
+                    showOldNumbering ? 'translate-x-7' : 'translate-x-0'
+                  }`}
+                >
+                  {showOldNumbering && (
+                    <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  )}
+                </span>
+              </button>
+            </div>
+            {showOldNumbering && (
+              <div className="mt-3 pt-3 border-t border-amber-500/20 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="text-[10px] text-muted-foreground mb-1">Physics</div>
+                  <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">1-45</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="text-[10px] text-muted-foreground mb-1">Chemistry</div>
+                  <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">51-95</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="text-[10px] text-muted-foreground mb-1">Botany</div>
+                  <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">101-145</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <div className="text-[10px] text-muted-foreground mb-1">Zoology</div>
+                  <div className="text-xs font-semibold text-amber-600 dark:text-amber-400">151-195</div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Quick Stats Overview */}
         <Card className="border-2 border-primary/20">
           <CardHeader>

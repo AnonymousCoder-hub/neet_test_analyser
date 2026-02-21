@@ -226,39 +226,51 @@ export default function ResultsPage() {
               <p className="text-sm text-muted-foreground">Detailed Analysis Report</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Minimal Old OMR Toggle */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/40 border border-border/50">
-              <span className="text-xs font-medium text-muted-foreground">Old OMR</span>
-              <button
-                onClick={() => setShowOldNumbering(!showOldNumbering)}
-                className={`relative w-9 h-5 rounded-full transition-all duration-200 ease-out ${
-                  showOldNumbering ? 'bg-primary' : 'bg-input'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ease-out ${
-                    showOldNumbering ? 'translate-x-4' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-            <Link href="/">
-              <Button
-                variant="outline"
-                size="sm"
-                className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
-              >
-                <Home className="w-4 h-4 mr-2" />
-                Home
-              </Button>
-            </Link>
-          </div>
+          <Link href="/">
+            <Button
+              variant="outline"
+              size="sm"
+              className="hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
+            >
+              <Home className="w-4 h-4 mr-2" />
+              Home
+            </Button>
+          </Link>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* Question Numbering Toggle */}
+        <Card className="border border-border">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-medium">Question Numbering</div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  {showOldNumbering
+                    ? 'Old OMR: 1-45, 51-95, 101-145, 151-195'
+                    : 'Standard: 1-180'
+                  }
+                </div>
+              </div>
+              <button
+                onClick={() => setShowOldNumbering(!showOldNumbering)}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-200 ease-in-out ${
+                  showOldNumbering ? 'bg-primary' : 'bg-input'
+                }`}
+                aria-pressed={showOldNumbering}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-in-out ${
+                    showOldNumbering ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Quick Stats Overview */}
         <Card className="border-2 border-primary/20">
           <CardHeader>

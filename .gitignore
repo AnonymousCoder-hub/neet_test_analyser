@@ -52,3 +52,9 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Sandbox-specific files
+/db/
+/mini-services/
+/download/
+/.zscripts/
+worklog.md

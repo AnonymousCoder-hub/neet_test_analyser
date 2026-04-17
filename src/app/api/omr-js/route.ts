@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createCanvas, loadImage, ImageData } from 'canvas';
 
 // Force Node.js runtime for canvas package
 export const runtime = 'nodejs';
@@ -71,6 +70,22 @@ function getRowY(startY: number, endY: number, rowIndex: number, totalRows: numb
 
 export async function POST(request: NextRequest) {
   try {
+    // Dynamically import canvas - may not be available on all platforms
+    let createCanvas: any, loadImage: any;
+    try {
+      const canvasModule = await import('canvas');
+      createCanvas = canvasModule.createCanvas;
+      loadImage = canvasModule.loadImage;
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'OMR scanning is not available on this platform. The canvas package is required but not installed. Please use Manual or OMR input mode instead.',
+        },
+        { status: 501 }
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
     const settingsStr = formData.get('settings') as string;

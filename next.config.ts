@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // Handle canvas package which requires native binaries
+  // It's dynamically imported so won't break the build
+  serverExternalPackages: ['canvas'],
 };
 
 export default nextConfig;

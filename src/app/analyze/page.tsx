@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { Moon, Sun } from 'lucide-react'
 import { OMRScannerDialog } from '@/components/omr-scanner-dialog'
+import { useAuth, pushSingleRecord } from '@/lib/auth-store'
 
 // Subject configuration
 const SUBJECTS = [
@@ -286,6 +287,12 @@ export default function AnalyzePage() {
     records.unshift(record)
     localStorage.setItem('testRecords', JSON.stringify(records))
     localStorage.setItem(`analysis-${record.id}`, JSON.stringify(overall))
+
+    // Auto-push to cloud if logged in
+    const { token: authToken, isAuthenticated } = useAuth.getState()
+    if (isAuthenticated && authToken) {
+      pushSingleRecord(authToken, record).catch(() => {})
+    }
 
     router.push(`/results/${record.id}`)
   }

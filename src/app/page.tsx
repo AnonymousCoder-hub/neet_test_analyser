@@ -1,14 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Plus, Settings, History, Award, Calendar, Trash2, Edit2, Timer, StickyNote, Moon, Sun, Cloud } from 'lucide-react'
+import { Plus, Settings, History, Award, Calendar, Trash2, Edit2, Timer, StickyNote, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { ProfileMenu } from '@/components/profile-menu'
-import { useAuth } from '@/lib/auth-store'
+import { useAuth, deleteCloudRecord, pushToCloud, pullFromCloud } from '@/lib/auth-store'
 import { toast } from 'sonner'
 
 // Subject configuration
@@ -51,13 +50,30 @@ export default function Home() {
   const { user, token, isAuthenticated } = useAuth()
   const router = useRouter()
 
-  useEffect(() => {
+  const loadRecords = useCallback(() => {
     const localRecords = localStorage.getItem('testRecords')
     if (localRecords) {
       setTestRecords(JSON.parse(localRecords))
+    } else {
+      setTestRecords([])
     }
     setLoading(false)
   }, [])
+
+  useEffect(() => {
+    loadRecords()
+  }, [loadRecords])
+
+  // Auto-pull from cloud when user logs in
+  useEffect(() => {
+    if (isAuthenticated && token) {
+      pullFromCloud(token).then(result => {
+        if (result.success && result.count > 0) {
+          loadRecords() // Refresh local display
+        }
+      }).catch(() => {})
+    }
+  }, [isAuthenticated, token, loadRecords])
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -79,23 +95,17 @@ export default function Home() {
     ? Math.round(testRecords.reduce((sum, r) => sum + r.totalMarks, 0) / testRecords.length)
     : 0
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
     if (confirm('Are you sure you want to delete this test?')) {
       const updatedRecords = testRecords.filter(r => r.id !== id)
       setTestRecords(updatedRecords)
       localStorage.setItem('testRecords', JSON.stringify(updatedRecords))
       localStorage.removeItem(`analysis-${id}`)
+      
       // Also delete from cloud if logged in
       if (isAuthenticated && token) {
-        fetch('/api/test-records', {
-          method: 'DELETE',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({ recordId: id }),
-        }).catch(() => {})
+        deleteCloudRecord(token, id).catch(() => {})
       }
     }
   }
@@ -113,20 +123,14 @@ export default function Home() {
     if (!isAuthenticated || !token) return
     setSyncing(true)
     try {
-      const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
-      const res = await fetch('/api/test-records', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ records }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        toast.success(`Synced ${data.count} test(s) to cloud!`)
+      // First pull, then push
+      await pullFromCloud(token)
+      const result = await pushToCloud(token)
+      loadRecords() // Refresh
+      if (result.success) {
+        toast.success(`Cloud sync complete!`)
       } else {
-        toast.error(data.error || 'Sync failed')
+        toast.error('Sync failed')
       }
     } catch {
       toast.error('Sync failed')
@@ -185,7 +189,7 @@ export default function Home() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* Sync button when logged in */}
+            {/* Cloud sync status when logged in */}
             {isAuthenticated && (
               <Button
                 variant="ghost"
@@ -193,9 +197,9 @@ export default function Home() {
                 onClick={handleSync}
                 disabled={syncing}
                 className="hover:bg-accent hover:scale-110 active:scale-95 transition-all duration-200 rounded-full"
-                title="Sync to cloud"
+                title="Sync with cloud"
               >
-                <Cloud className={`w-4 h-4 ${syncing ? 'animate-pulse' : ''}`} />
+                <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
               </Button>
             )}
             <Link href="/settings">
@@ -215,6 +219,20 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* Cloud sync indicator */}
+        {isAuthenticated && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <Cloud className="w-3.5 h-3.5 text-green-500" />
+            <span>Synced as <strong className="text-foreground">{user?.username}</strong> — data auto-syncs to cloud</span>
+          </div>
+        )}
+        {!isAuthenticated && (
+          <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <CloudOff className="w-3.5 h-3.5" />
+            <span>Data stored locally only — <button onClick={() => {}} className="text-primary hover:underline">login to sync</button></span>
+          </div>
+        )}
+
         {/* Stats Overview */}
         {testRecords.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-8">

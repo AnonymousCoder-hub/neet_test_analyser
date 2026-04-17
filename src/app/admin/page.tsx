@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Shield, Search, Users, FileText, ArrowLeft, Eye, Trash2, Key, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Label } from '@/components/ui/label'
+import { Shield, Search, Users, FileText, ArrowLeft, Eye, Trash2, Key, Loader2, AlertCircle, ChevronLeft, ChevronRight, Lock, User, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -29,33 +30,47 @@ export default function AdminPage() {
   const [selectedUser, setSelectedUser] = useState<{ user: any; records: any[] } | null>(null)
   const [loadingRecords, setLoadingRecords] = useState(false)
 
+  // Login state
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+
   const handleLogin = async () => {
-    if (!token.trim()) {
-      toast.error('Please enter admin token')
+    if (!username.trim() || !password.trim()) {
+      toast.error('Please enter username and password')
       return
     }
 
-    // Verify the token is for an admin user
+    setLoginLoading(true)
     try {
-      const res = await fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` },
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        if (data.user?.role === 'admin') {
-          setIsLoggedIn(true)
-          localStorage.setItem('admin-token', token)
-          toast.success('Admin access granted')
-          fetchUsers(token, 1, '')
-        } else {
-          toast.error('This account does not have admin privileges')
-        }
-      } else {
-        toast.error('Invalid token')
+      const data = await res.json()
+
+      if (!res.ok) {
+        toast.error(data.error || 'Login failed')
+        return
       }
+
+      if (data.user?.role !== 'admin') {
+        toast.error('This account does not have admin privileges')
+        return
+      }
+
+      setToken(data.token)
+      setIsLoggedIn(true)
+      localStorage.setItem('admin-token', data.token)
+      toast.success('Admin access granted')
+      fetchUsers(data.token, 1, '')
     } catch {
       toast.error('Authentication failed')
+    } finally {
+      setLoginLoading(false)
     }
   }
 
@@ -68,14 +83,14 @@ export default function AdminPage() {
       fetch('/api/auth/me', {
         headers: { 'Authorization': `Bearer ${savedToken}` },
       }).then(res => {
-        if (res.ok) {
-          return res.json()
-        }
+        if (res.ok) return res.json()
         throw new Error('Invalid')
       }).then(data => {
         if (data.user?.role === 'admin') {
           setIsLoggedIn(true)
           fetchUsers(savedToken, 1, '')
+        } else {
+          localStorage.removeItem('admin-token')
         }
       }).catch(() => {
         localStorage.removeItem('admin-token')
@@ -155,6 +170,14 @@ export default function AdminPage() {
     toast.success('Token copied!')
   }
 
+  const handleLogout = () => {
+    setIsLoggedIn(false)
+    setToken('')
+    localStorage.removeItem('admin-token')
+    setUsername('')
+    setPassword('')
+  }
+
   const totalPages = Math.ceil(total / 20)
 
   // Recalculate marks for a record
@@ -192,19 +215,60 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Admin JWT Token</label>
+              <Label htmlFor="admin-username" className="flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5" />
+                Username
+              </Label>
               <Input
-                type="password"
-                placeholder="Enter admin JWT token..."
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
+                id="admin-username"
+                type="text"
+                placeholder="Enter admin username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-                className="font-mono"
+                disabled={loginLoading}
+                autoComplete="username"
               />
             </div>
-            <Button onClick={handleLogin} className="w-full">
-              <Shield className="w-4 h-4 mr-2" />
-              Access Admin Panel
+            <div className="space-y-2">
+              <Label htmlFor="admin-password" className="flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5" />
+                Password
+              </Label>
+              <div className="relative">
+                <Input
+                  id="admin-password"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter admin password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={loginLoading}
+                  autoComplete="current-password"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <Button onClick={handleLogin} className="w-full" disabled={loginLoading}>
+              {loginLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Authenticating...
+                </>
+              ) : (
+                <>
+                  <Shield className="w-4 h-4 mr-2" />
+                  Access Admin Panel
+                </>
+              )}
             </Button>
           </CardContent>
         </Card>
@@ -218,7 +282,7 @@ export default function AdminPage() {
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => { setIsLoggedIn(false); localStorage.removeItem('admin-token'); setToken(''); }}>
+            <Button variant="ghost" size="icon" onClick={handleLogout}>
               <ArrowLeft className="w-5 h-5" />
             </Button>
             <div className="flex items-center gap-2">

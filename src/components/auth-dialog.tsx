@@ -25,6 +25,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth-store'
+import { pullFromCloud } from '@/lib/auth-store'
 import { toast } from 'sonner'
 
 interface AuthDialogProps {
@@ -121,6 +122,17 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
 
       login(data.user, data.token)
       toast.success(`Welcome back, ${data.user.username}!`)
+
+      // Auto-pull cloud data after login
+      try {
+        const result = await pullFromCloud(data.token)
+        if (result.success && result.count > 0) {
+          toast.success(`Synced ${result.count} test(s) from cloud`)
+        }
+      } catch {
+        // Silent fail - cloud sync is optional
+      }
+
       handleOpenChange(false)
     } catch {
       toast.error('Network error. Please try again.')
@@ -169,6 +181,24 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
       }
 
       login(data.user, data.token)
+
+      // Auto-push existing local data to cloud on first registration
+      try {
+        const localRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
+        if (localRecords.length > 0) {
+          await fetch('/api/test-records', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${data.token}`,
+            },
+            body: JSON.stringify({ records: localRecords }),
+          })
+          toast.success(`${localRecords.length} local test(s) synced to cloud`)
+        }
+      } catch {
+        // Silent fail
+      }
 
       if (data.user.securityToken) {
         setSecurityToken(data.user.securityToken)
@@ -251,7 +281,7 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
             NEET Test Analyzer
           </DialogTitle>
           <DialogDescription>
-            Sign in to your account or create a new one to get started.
+            Sign in to your account or create a new one to sync your data across devices.
           </DialogDescription>
         </DialogHeader>
 

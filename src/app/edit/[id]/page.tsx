@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ArrowLeft, Save, Loader2, Timer, BookOpen, StickyNote } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
+import { useAuth, pushSingleRecord } from '@/lib/auth-store'
 
 // Subject configuration
 const SUBJECTS = [
@@ -306,6 +307,12 @@ export default function EditPage() {
     }
 
     localStorage.setItem(`analysis-${testId}`, JSON.stringify(overall))
+
+    // Auto-push to cloud if logged in
+    const { token: authToken, isAuthenticated } = useAuth.getState()
+    if (isAuthenticated && authToken) {
+      pushSingleRecord(authToken, record).catch(() => {})
+    }
 
     setSaving(false)
     router.push(`/results/${testId}`)

@@ -3,13 +3,13 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Upload, Download, Trash2, AlertCircle, CheckCircle2, Shield, Cloud, CloudOff } from 'lucide-react'
+import { ArrowLeft, Upload, Download, Trash2, AlertCircle, CheckCircle2, Shield, Cloud, CloudOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import { Moon, Sun, Monitor } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { useAuth } from '@/lib/auth-store'
+import { useAuth, pushToCloud, pullFromCloud } from '@/lib/auth-store'
 
 export default function SettingsPage() {
   const [testCount, setTestCount] = useState(0)
@@ -78,6 +78,55 @@ export default function SettingsPage() {
     toast.success(`Exported ${recordsArray.length} test(s) — ${sizeKB} KB`)
   }
 
+  const recalculateRecord = (record: any) => {
+    const marked = (record.markedAnswers || '').replace(/\s/g, '').split('')
+    const correct = (record.correctAnswers || '').replace(/\s/g, '').split('')
+    const selectedSubjects = record.selectedSubjects || { physics: true, chemistry: true, botany: true, zoology: true }
+
+    let totalCorrect = 0, totalWrong = 0, totalUnmarked = 0
+    let pC = 0, pW = 0, cC = 0, cW = 0, bC = 0, bW = 0, zC = 0, zW = 0
+
+    for (let i = 0; i < 180; i++) {
+      const qNum = i + 1
+      const subject = qNum <= 45 ? 'physics' : qNum <= 90 ? 'chemistry' : qNum <= 135 ? 'botany' : 'zoology'
+      if (!selectedSubjects[subject]) continue
+
+      const m = marked[i] || '0'
+      const c = correct[i] || '0'
+      const isUnmarked = m === '0'
+
+      if (isUnmarked) {
+        totalUnmarked++
+      } else if (m === c) {
+        totalCorrect++
+        if (subject === 'physics') pC++; else if (subject === 'chemistry') cC++; else if (subject === 'botany') bC++; else zC++
+      } else {
+        totalWrong++
+        if (subject === 'physics') pW++; else if (subject === 'chemistry') cW++; else if (subject === 'botany') bW++; else zW++
+      }
+    }
+
+    const selectedCount = Object.values(selectedSubjects).filter(Boolean).length
+    const maxMarks = selectedCount * 180
+    const totalMarks = (totalCorrect * 4) - (totalWrong * 1)
+
+    return {
+      ...record,
+      totalMarks,
+      maxMarks,
+      percentage: maxMarks > 0 ? parseFloat(((totalMarks / maxMarks) * 100).toFixed(2)) : 0,
+      totalCorrect,
+      totalWrong,
+      totalUnmarked,
+      physicsMarks: (pC * 4) - (pW * 1),
+      chemistryMarks: (cC * 4) - (cW * 1),
+      botanyMarks: (bC * 4) - (bW * 1),
+      zoologyMarks: (zC * 4) - (zW * 1),
+      markedAnswers: marked.join(''),
+      correctAnswers: correct.join(''),
+    }
+  }
+
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -85,7 +134,7 @@ export default function SettingsPage() {
     setImporting(true)
     const reader = new FileReader()
 
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const content = e.target?.result as string
         const importedData = JSON.parse(content)
@@ -142,6 +191,12 @@ export default function SettingsPage() {
         })
 
         setTestCount(uniqueRecords.length)
+        
+        // Auto-push imported records to cloud if logged in
+        if (isAuthenticated && token) {
+          pushToCloud(token).catch(() => {})
+        }
+        
         toast.success(`Imported ${recordsToImport.length} test record(s)!`)
       } catch (error) {
         console.error('Import error:', error)
@@ -157,55 +212,6 @@ export default function SettingsPage() {
     reader.readAsText(file)
   }
 
-  const recalculateRecord = (record: any) => {
-    const marked = (record.markedAnswers || '').replace(/\s/g, '').split('')
-    const correct = (record.correctAnswers || '').replace(/\s/g, '').split('')
-    const selectedSubjects = record.selectedSubjects || { physics: true, chemistry: true, botany: true, zoology: true }
-
-    let totalCorrect = 0, totalWrong = 0, totalUnmarked = 0
-    let pC = 0, pW = 0, cC = 0, cW = 0, bC = 0, bW = 0, zC = 0, zW = 0
-
-    for (let i = 0; i < 180; i++) {
-      const qNum = i + 1
-      const subject = qNum <= 45 ? 'physics' : qNum <= 90 ? 'chemistry' : qNum <= 135 ? 'botany' : 'zoology'
-      if (!selectedSubjects[subject]) continue
-
-      const m = marked[i] || '0'
-      const c = correct[i] || '0'
-      const isUnmarked = m === '0'
-
-      if (isUnmarked) {
-        totalUnmarked++
-      } else if (m === c) {
-        totalCorrect++
-        if (subject === 'physics') pC++; else if (subject === 'chemistry') cC++; else if (subject === 'botany') bC++; else zC++
-      } else {
-        totalWrong++
-        if (subject === 'physics') pW++; else if (subject === 'chemistry') cW++; else if (subject === 'botany') bW++; else zW++
-      }
-    }
-
-    const selectedCount = Object.values(selectedSubjects).filter(Boolean).length
-    const maxMarks = selectedCount * 180
-    const totalMarks = (totalCorrect * 4) - (totalWrong * 1)
-
-    return {
-      ...record,
-      totalMarks,
-      maxMarks,
-      percentage: maxMarks > 0 ? parseFloat(((totalMarks / maxMarks) * 100).toFixed(2)) : 0,
-      totalCorrect,
-      totalWrong,
-      totalUnmarked,
-      physicsMarks: (pC * 4) - (pW * 1),
-      chemistryMarks: (cC * 4) - (cW * 1),
-      botanyMarks: (bC * 4) - (bW * 1),
-      zoologyMarks: (zC * 4) - (zW * 1),
-      markedAnswers: marked.join(''),
-      correctAnswers: correct.join(''),
-    }
-  }
-
   const handleClearAll = () => {
     if (confirm('Are you sure you want to delete all test records? This action cannot be undone.')) {
       setClearing(true)
@@ -217,10 +223,23 @@ export default function SettingsPage() {
       setTestCount(0)
       setClearing(false)
       toast.success('All test records cleared!')
+      
+      // Also clear cloud data if logged in
+      if (isAuthenticated && token) {
+        // Push empty records to effectively clear cloud
+        fetch('/api/test-records', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ records: [] }),
+        }).catch(() => {})
+      }
     }
   }
 
-  const handleSync = async () => {
+  const handleFullSync = async () => {
     if (!isAuthenticated || !token) {
       toast.error('Please login to sync data')
       return
@@ -228,56 +247,18 @@ export default function SettingsPage() {
 
     setSyncing(true)
     try {
-      const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
-      const res = await fetch('/api/test-records', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ records }),
-      })
-
-      const data = await res.json()
-      if (res.ok) {
-        toast.success(`Synced ${data.count} test(s) to cloud!`)
+      // First pull, then push
+      const pullResult = await pullFromCloud(token)
+      const pushResult = await pushToCloud(token)
+      loadTestCount()
+      
+      if (pullResult.success && pushResult.success) {
+        toast.success(`Cloud sync complete! Pull: ${pullResult.count} test(s), Push: ${pushResult.count} test(s)`)
       } else {
-        toast.error(data.error || 'Sync failed')
+        toast.error('Sync partially failed')
       }
-    } catch (error) {
+    } catch {
       toast.error('Sync failed — network error')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  const handlePullFromCloud = async () => {
-    if (!isAuthenticated || !token) {
-      toast.error('Please login to pull data')
-      return
-    }
-
-    setSyncing(true)
-    try {
-      const res = await fetch('/api/test-records', {
-        headers: { 'Authorization': `Bearer ${token}` },
-      })
-      const data = await res.json()
-
-      if (res.ok && data.records) {
-        // Merge cloud records with local
-        const localRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
-        const cloudRecords = data.records.map((r: any) => recalculateRecord(r))
-        const merged = [...cloudRecords, ...localRecords]
-        const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
-        localStorage.setItem('testRecords', JSON.stringify(unique))
-        setTestCount(unique.length)
-        toast.success(`Pulled ${cloudRecords.length} test(s) from cloud!`)
-      } else {
-        toast.error(data.error || 'Pull failed')
-      }
-    } catch (error) {
-      toast.error('Pull failed — network error')
     } finally {
       setSyncing(false)
     }
@@ -311,6 +292,65 @@ export default function SettingsPage() {
       {/* Main Content */}
       <main className="flex-1 container mx-auto px-4 py-8 max-w-3xl">
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {/* Cloud Sync */}
+          <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-primary" />
+                <CardTitle>Cloud Sync</CardTitle>
+              </div>
+              <CardDescription>
+                {isAuthenticated
+                  ? `Sync your data across devices (logged in as ${user?.username})`
+                  : 'Login to sync your data across devices'
+                }
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isAuthenticated ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+                      {user?.username?.[0]?.toUpperCase()}
+                    </div>
+                    <div>
+                      <div className="font-medium text-sm">{user?.username}</div>
+                      <div className="text-xs text-muted-foreground">Account connected</div>
+                    </div>
+                    <CheckCircle2 className="w-5 h-5 text-green-500 ml-auto" />
+                  </div>
+                  <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+                    <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-xs font-medium">
+                      <Cloud className="w-3.5 h-3.5" />
+                      <span>Auto-sync enabled — your tests are automatically saved to cloud when you create, edit, or delete them</span>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={handleFullSync}
+                    disabled={syncing}
+                    className="w-full h-11"
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
+                    {syncing ? 'Syncing...' : 'Full Sync (Pull + Push)'}
+                  </Button>
+                </div>
+              ) : (
+                <Alert className="border-2">
+                  <CloudOff className="h-4 w-4" />
+                  <AlertTitle>Login Required</AlertTitle>
+                  <AlertDescription className="mt-2">
+                    <p className="text-sm mb-3">
+                      Create an account or login to sync your test records to the cloud. Your data will be accessible from any device.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Click the profile icon in the top-right corner to get started.
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Data Management */}
           <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
             <CardHeader>
@@ -390,70 +430,6 @@ export default function SettingsPage() {
                   </div>
                 </AlertDescription>
               </Alert>
-            </CardContent>
-          </Card>
-
-          {/* Cloud Sync */}
-          <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
-            <CardHeader>
-              <div className="flex items-center gap-2">
-                <Cloud className="w-5 h-5 text-primary" />
-                <CardTitle>Cloud Sync</CardTitle>
-              </div>
-              <CardDescription>
-                {isAuthenticated
-                  ? `Sync your data across devices (logged in as ${user?.username})`
-                  : 'Login to sync your data across devices'
-                }
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {isAuthenticated ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-lg border border-primary/10">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
-                      {user?.username?.[0]?.toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="font-medium text-sm">{user?.username}</div>
-                      <div className="text-xs text-muted-foreground">Account connected</div>
-                    </div>
-                    <CheckCircle2 className="w-5 h-5 text-green-500 ml-auto" />
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <Button
-                      onClick={handleSync}
-                      disabled={syncing || testCount === 0}
-                      className="flex-1 h-11"
-                    >
-                      <Cloud className="w-4 h-4 mr-2" />
-                      {syncing ? 'Syncing...' : 'Push to Cloud'}
-                    </Button>
-                    <Button
-                      onClick={handlePullFromCloud}
-                      disabled={syncing}
-                      variant="outline"
-                      className="flex-1 h-11"
-                    >
-                      <CloudOff className="w-4 h-4 mr-2" />
-                      {syncing ? 'Pulling...' : 'Pull from Cloud'}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <Alert className="border-2">
-                  <Cloud className="h-4 w-4" />
-                  <AlertTitle>Login Required</AlertTitle>
-                  <AlertDescription className="mt-2">
-                    <p className="text-sm mb-3">
-                      Create an account or login to sync your test records to the cloud. Your data will be accessible from any device.
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Click the profile icon in the top-right corner to get started.
-                    </p>
-                  </AlertDescription>
-                </Alert>
-              )}
             </CardContent>
           </Card>
 

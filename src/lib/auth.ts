@@ -19,9 +19,14 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 }
 
 export async function generateSecurityToken(): Promise<string> {
-  const salt = await bcrypt.genSalt(8)
-  const random = Math.random().toString(36).substring(2, 15)
-  return bcrypt.hash(random, salt).replace(/[/$.]/g, '').substring(0, 16).toUpperCase()
+  // Generate a simple secure token using crypto
+  const array = new Uint8Array(8)
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(array)
+  } else {
+    for (let i = 0; i < 8; i++) array[i] = Math.floor(Math.random() * 256)
+  }
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('').toUpperCase().substring(0, 16)
 }
 
 export async function createToken(user: AuthUser): Promise<string> {

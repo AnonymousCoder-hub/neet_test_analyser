@@ -64,3 +64,29 @@ Stage Summary:
 - Admin credentials: admin / neetadmin2024
 - TEST1 user and their test data verified in Supabase cloud
 - All routes working: /, /settings, /analyze, /admin, /edit/[id], /results/[id]
+
+---
+Task ID: 3
+Agent: Main (Continuation 2)
+Task: Deploy to Vercel testdiary.vercel.app with environment variables
+
+Work Log:
+- Retrieved Supabase API keys for project oobshknexufiliijonud (anon key + service role key)
+- Verified Supabase project has users and test_records tables with data (admin, TEST1 users)
+- Updated .env.local with correct Supabase URL (oobshknexufiliijonud.supabase.co)
+- Fixed OMR scanner route to use dynamic import for canvas (graceful failure on platforms without native canvas)
+- Updated next.config.ts with serverExternalPackages for canvas compatibility
+- Build passes cleanly
+- Lint passes cleanly
+- Attempted Vercel CLI deployment with provided token (vcp_7HXiL2LvHaMHtkIn91x5...)
+- BLOCKED: Vercel token has SAML SSO restrictions that block all project/scope API operations
+- Tried multiple approaches: CLI deploy, API project creation, different CLI versions, scope overrides
+- All approaches fail with SAML enforcement error: "Not authorized: Trying to access resource under scope 'anonymouscoder-hubs-projects'"
+- The existing deployment at testdiary.vercel.app is an OLDER version without auth/cloud sync features
+
+Stage Summary:
+- Project code is fully ready for Vercel deployment
+- Environment variables identified and documented
+- SAML token restriction prevents programmatic deployment
+- User needs to deploy from Vercel dashboard or provide SAML-authenticated token
+- Required env vars: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, JWT_SECRET

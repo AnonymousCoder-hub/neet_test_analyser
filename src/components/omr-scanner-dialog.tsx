@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Upload, Play, RotateCcw, Loader2, CheckCircle2, AlertCircle, Save, FolderOpen, Download, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { processOMR } from '@/lib/omr-processor'
 
 const NUM_COLS = 4
 const OPTIONS = 4
@@ -466,11 +467,8 @@ export function OMRScannerDialog({ open, onOpenChange, onAnswersDetected }: OMRS
     }
 
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('settings', JSON.stringify(settings))
-      const res = await fetch('/api/omr-js', { method: 'POST', body: fd })
-      setResult(await res.json())
+      const result = await processOMR(file, settings)
+      setResult(result)
     } catch (e) {
       setResult({ success: false, error: String(e) })
     } finally {

@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { ProfileMenu } from '@/components/profile-menu'
-import { useAuth, deleteCloudRecord, pushToCloud, pullFromCloud } from '@/lib/auth-store'
+import { useAuth, deleteCloudRecord, fullSync } from '@/lib/auth-store'
 import { toast } from 'sonner'
 
 // Subject configuration
@@ -64,11 +64,11 @@ export default function Home() {
     loadRecords()
   }, [loadRecords])
 
-  // Auto-pull from cloud when user logs in
+  // Auto-sync when user logs in
   useEffect(() => {
     if (isAuthenticated && token) {
-      pullFromCloud(token).then(result => {
-        if (result.success && result.count > 0) {
+      fullSync(token).then(result => {
+        if (result.success && (result.pushedCount > 0 || result.pulledCount > 0)) {
           loadRecords() // Refresh local display
         }
       }).catch(() => {})
@@ -123,12 +123,10 @@ export default function Home() {
     if (!isAuthenticated || !token) return
     setSyncing(true)
     try {
-      // First pull, then push
-      await pullFromCloud(token)
-      const result = await pushToCloud(token)
+      const result = await fullSync(token)
       loadRecords() // Refresh
       if (result.success) {
-        toast.success(`Cloud sync complete!`)
+        toast.success(`Sync complete! ${result.pushedCount} pushed, ${result.pulledCount} pulled (total: ${result.totalCount})`)
       } else {
         toast.error('Sync failed')
       }

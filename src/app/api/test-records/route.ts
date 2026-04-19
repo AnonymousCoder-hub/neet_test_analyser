@@ -56,6 +56,8 @@ export async function GET(request: NextRequest) {
 }
 
 // POST - Sync (upsert) test records to Supabase
+// If fullSync=true, records NOT in the payload will be deleted from cloud (use for full sync)
+// If fullSync=false or absent, only upsert — no deletions (use for single record pushes)
 export async function POST(request: NextRequest) {
   try {
     const token = getTokenFromHeaders(request)
@@ -68,7 +70,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
     }
 
-    const { records } = await request.json()
+    const body = await request.json()
+    const { records, fullSync } = body
 
     if (!Array.isArray(records)) {
       return NextResponse.json({ error: 'Records must be an array' }, { status: 400 })
@@ -99,25 +102,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to sync records' }, { status: 500 })
     }
 
-    // Delete records that exist in Supabase but not in the sync payload
-    const syncedIds = records.map((r: any) => r.id)
-    if (syncedIds.length > 0) {
-      // Get all records for this user
-      const { data: existingRecords } = await supabase
-        .from('test_records')
-        .select('id')
-        .eq('user_id', user.id)
+    // Only delete records missing from payload during a full sync
+    if (fullSync === true) {
+      const syncedIds = records.map((r: any) => r.id)
+      if (syncedIds.length > 0) {
+        // Get all records for this user
+        const { data: existingRecords } = await supabase
+          .from('test_records')
+          .select('id')
+          .eq('user_id', user.id)
 
-      if (existingRecords) {
-        const existingIds = existingRecords.map((r: any) => r.id)
-        const idsToDelete = existingIds.filter((id: string) => !syncedIds.includes(id))
+        if (existingRecords) {
+          const existingIds = existingRecords.map((r: any) => r.id)
+          const idsToDelete = existingIds.filter((id: string) => !syncedIds.includes(id))
 
-        if (idsToDelete.length > 0) {
-          await supabase
-            .from('test_records')
-            .delete()
-            .in('id', idsToDelete)
-            .eq('user_id', user.id)
+          if (idsToDelete.length > 0) {
+            await supabase
+              .from('test_records')
+              .delete()
+              .in('id', idsToDelete)
+              .eq('user_id', user.id)
+          }
         }
       }
     }

@@ -76,7 +76,8 @@ export function recalculateRecord(record: any) {
   }
 }
 
-// Helper: push local test records to cloud
+// Helper: push ALL local test records to cloud (full sync)
+// Uses fullSync=true so cloud matches local exactly (deletes records removed locally)
 export async function pushToCloud(token: string): Promise<{ success: boolean; count: number }> {
   try {
     const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
@@ -88,7 +89,7 @@ export async function pushToCloud(token: string): Promise<{ success: boolean; co
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify({ records }),
+      body: JSON.stringify({ records, fullSync: true }),
     })
 
     const data = await res.json()
@@ -102,7 +103,8 @@ export async function pushToCloud(token: string): Promise<{ success: boolean; co
 }
 
 // Helper: pull cloud records and merge with local
-export async function pullFromCloud(token: string): Promise<{ success: boolean; count: number }> {
+// Cloud records are kept for duplicates (same ID), local-only records are preserved
+export async function pullFromCloud(token: string): Promise<{ success: boolean; cloudCount: number; localCount: number; totalCount: number }> {
   try {
     const res = await fetch('/api/test-records', {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -111,19 +113,24 @@ export async function pullFromCloud(token: string): Promise<{ success: boolean; 
 
     if (res.ok && data.records) {
       const localRecords: any[] = JSON.parse(localStorage.getItem('testRecords') || '[]')
+      const localCount = localRecords.length
       const cloudRecords: any[] = data.records.map((r: any) => recalculateRecord(r))
+      const cloudCount = cloudRecords.length
+
+      // Merge: cloud first (takes priority on same ID), then local-only records
       const merged = [...cloudRecords, ...localRecords]
       const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
       localStorage.setItem('testRecords', JSON.stringify(unique))
-      return { success: true, count: cloudRecords.length }
+
+      return { success: true, cloudCount, localCount, totalCount: unique.length }
     }
-    return { success: false, count: 0 }
+    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0 }
   } catch {
-    return { success: false, count: 0 }
+    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0 }
   }
 }
 
-// Helper: push a single test record to cloud
+// Helper: push a single test record to cloud (upsert only, NO deletion of other records)
 export async function pushSingleRecord(token: string, record: any): Promise<boolean> {
   try {
     const res = await fetch('/api/test-records', {
@@ -132,6 +139,7 @@ export async function pushSingleRecord(token: string, record: any): Promise<bool
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
+      // NO fullSync flag — this only upserts the single record without deleting others
       body: JSON.stringify({ records: [record] }),
     })
     return res.ok
@@ -154,5 +162,25 @@ export async function deleteCloudRecord(token: string, recordId: string): Promis
     return res.ok
   } catch {
     return false
+  }
+}
+
+// Helper: full 2-way sync — push local to cloud, then pull cloud to local
+export async function fullSync(token: string): Promise<{ success: boolean; pushedCount: number; pulledCount: number; totalCount: number }> {
+  try {
+    // Step 1: Push all local records to cloud (fullSync=true to match local state)
+    const pushResult = await pushToCloud(token)
+    
+    // Step 2: Pull cloud records and merge
+    const pullResult = await pullFromCloud(token)
+
+    return {
+      success: pushResult.success && pullResult.success,
+      pushedCount: pushResult.count,
+      pulledCount: pullResult.cloudCount,
+      totalCount: pullResult.totalCount,
+    }
+  } catch {
+    return { success: false, pushedCount: 0, pulledCount: 0, totalCount: 0 }
   }
 }

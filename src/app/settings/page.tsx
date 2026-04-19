@@ -9,7 +9,7 @@ import { useTheme } from 'next-themes'
 import { Moon, Sun, Monitor } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { useAuth, pushToCloud, pullFromCloud } from '@/lib/auth-store'
+import { useAuth, pushToCloud, fullSync } from '@/lib/auth-store'
 
 export default function SettingsPage() {
   const [testCount, setTestCount] = useState(0)
@@ -247,13 +247,11 @@ export default function SettingsPage() {
 
     setSyncing(true)
     try {
-      // First pull, then push
-      const pullResult = await pullFromCloud(token)
-      const pushResult = await pushToCloud(token)
+      const result = await fullSync(token)
       loadTestCount()
       
-      if (pullResult.success && pushResult.success) {
-        toast.success(`Cloud sync complete! Pull: ${pullResult.count} test(s), Push: ${pushResult.count} test(s)`)
+      if (result.success) {
+        toast.success(`Sync complete! Pushed: ${result.pushedCount}, Pulled: ${result.pulledCount}, Total: ${result.totalCount}`)
       } else {
         toast.error('Sync partially failed')
       }

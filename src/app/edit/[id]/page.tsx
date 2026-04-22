@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { ArrowLeft, Save, Loader2, Timer, BookOpen, StickyNote } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Timer, BookOpen, StickyNote, Leaf } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth, pushSingleRecord } from '@/lib/auth-store'
@@ -36,27 +36,66 @@ export default function EditPage() {
       chemistry: true,
       botany: true,
       zoology: true,
-    }
+    },
+    combinedBiology: false,
   })
   const [originalCreatedAt, setOriginalCreatedAt] = useState<string | null>(null)
   const [showOldNumbering, setShowOldNumbering] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  // Display subjects (merge Botany+Zoology into Biology when combined)
+  const displaySubjects = testData.combinedBiology
+    ? [
+        { id: 'physics', name: 'Physics', color: 'bg-blue-500', startIdx: 0, endIdx: 45 },
+        { id: 'chemistry', name: 'Chemistry', color: 'bg-green-500', startIdx: 45, endIdx: 90 },
+        { id: 'biology', name: 'Biology', color: 'bg-teal-500', startIdx: 90, endIdx: 180 },
+      ]
+    : SUBJECTS
+
+  // Check if a display subject is selected
+  const isDisplaySubjectSelected = (subjectId: string): boolean => {
+    if (testData.combinedBiology && subjectId === 'biology') {
+      return testData.selectedSubjects.botany && testData.selectedSubjects.zoology
+    }
+    return testData.selectedSubjects[subjectId as keyof typeof testData.selectedSubjects]
+  }
+
   // Get selected subjects info
-  const getSelectedSubjectsList = () => SUBJECTS.filter(s => testData.selectedSubjects[s.id as keyof typeof testData.selectedSubjects])
+  const getSelectedSubjectsList = () => displaySubjects.filter(s => isDisplaySubjectSelected(s.id))
   const getSelectedSubjectsCount = () => getSelectedSubjectsList().length
-  const getMaxMarks = () => getSelectedSubjectsCount() * 180
+  const getMaxMarks = () => {
+    if (testData.combinedBiology) {
+      let marks = 0
+      if (testData.selectedSubjects.physics) marks += 180
+      if (testData.selectedSubjects.chemistry) marks += 180
+      if (testData.selectedSubjects.botany) marks += 360
+      return marks
+    }
+    return getSelectedSubjectsCount() * 180
+  }
 
   // Toggle subject selection
   const toggleSubject = (subjectId: string) => {
-    setTestData(prev => ({
-      ...prev,
-      selectedSubjects: {
-        ...prev.selectedSubjects,
-        [subjectId]: !prev.selectedSubjects[subjectId as keyof typeof prev.selectedSubjects]
-      }
-    }))
+    if (testData.combinedBiology && subjectId === 'biology') {
+      const bothSelected = testData.selectedSubjects.botany && testData.selectedSubjects.zoology
+      setTestData(prev => ({
+        ...prev,
+        selectedSubjects: {
+          ...prev.selectedSubjects,
+          botany: !bothSelected,
+          zoology: !bothSelected,
+        }
+      }))
+    } else {
+      setTestData(prev => ({
+        ...prev,
+        selectedSubjects: {
+          ...prev.selectedSubjects,
+          [subjectId]: !prev.selectedSubjects[subjectId as keyof typeof prev.selectedSubjects]
+        }
+      }))
+    }
   }
 
   useLayoutEffect(() => {
@@ -86,7 +125,8 @@ export default function EditPage() {
             chemistry: true,
             botany: true,
             zoology: true,
-          }
+          },
+          combinedBiology: test.combinedBiology || false,
         })
         setOriginalCreatedAt(test.createdAt || null)
         setLoading(false)
@@ -274,6 +314,8 @@ export default function EditPage() {
       timeSlipEnabled: testData.timeSlipEnabled,
       timeTaken: testData.timeSlipEnabled ? { hours: testData.timeHours, minutes: testData.timeMinutes } : null,
       timeSlipMinutes: testData.timeSlipEnabled ? calculateTimeSlip() : null,
+      // Combined Biology
+      combinedBiology: testData.combinedBiology,
     }
 
     const record = {
@@ -297,6 +339,8 @@ export default function EditPage() {
       timeSlipEnabled: testData.timeSlipEnabled,
       timeTaken: testData.timeSlipEnabled ? { hours: testData.timeHours, minutes: testData.timeMinutes } : null,
       timeSlipMinutes: testData.timeSlipEnabled ? calculateTimeSlip() : null,
+      // Combined Biology
+      combinedBiology: testData.combinedBiology,
     }
 
     const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
@@ -372,9 +416,37 @@ export default function EditPage() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {SUBJECTS.map((subject) => {
-                  const isSelected = testData.selectedSubjects[subject.id as keyof typeof testData.selectedSubjects]
+              {/* Combined Biology Mode Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-teal-500/5 border border-teal-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center">
+                    <Leaf className="w-4 h-4 text-teal-500" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold">Combined Biology Mode</h4>
+                    <p className="text-xs text-muted-foreground">Merge Botany + Zoology into single Biology section</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setTestData({ ...testData, combinedBiology: !testData.combinedBiology })}
+                  className={`relative w-12 h-7 rounded-full transition-all duration-300 ease-in-out ${
+                    testData.combinedBiology 
+                      ? 'bg-teal-500 shadow-lg shadow-teal-500/30' 
+                      : 'bg-input hover:bg-muted'
+                  }`}
+                  aria-pressed={testData.combinedBiology}
+                >
+                  <span
+                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out ${
+                      testData.combinedBiology ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className={`grid gap-3 ${testData.combinedBiology ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4'}`}>
+                {displaySubjects.map((subject) => {
+                  const isSelected = isDisplaySubjectSelected(subject.id)
                   return (
                     <button
                       key={subject.id}
@@ -524,27 +596,79 @@ export default function EditPage() {
                   </span>
                 </div>
                 <div className="space-y-4">
-                  {SUBJECTS.map((subject) => {
-                    const isSelected = testData.selectedSubjects[subject.id as keyof typeof testData.selectedSubjects]
-                    const oldStart = subject.startIdx === 0 ? 1 : subject.startIdx === 45 ? 51 : subject.startIdx === 90 ? 101 : 151
-                    const oldEnd = oldStart + 44
-                    return (
-                      <div key={subject.id} className="space-y-3">
+                  {testData.combinedBiology ? (
+                    <>
+                      {/* Physics */}
+                      <div className="space-y-3">
                         <div className="flex items-center gap-2">
-                          <div className={`w-2 h-2 rounded-full ${subject.color}`} />
+                          <div className="w-2 h-2 rounded-full bg-blue-500" />
                           <h4 className="text-sm font-semibold">
-                            {subject.name} (Q{showOldNumbering ? oldStart : subject.startIdx + 1}-Q{showOldNumbering ? oldEnd : subject.endIdx})
+                            Physics (Q{showOldNumbering ? '1' : '1'}-Q{showOldNumbering ? '45' : '45'})
                           </h4>
-                          {!isSelected && (
+                          {!testData.selectedSubjects.physics && (
                             <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
                           )}
                         </div>
-                        <div className={`space-y-2 max-h-64 overflow-y-auto ${!isSelected ? 'opacity-40 pointer-events-none' : ''}`}>
-                          {Array.from({ length: 45 }, (_, i) => i + subject.startIdx).map((idx) => renderOMRRow(idx, !isSelected))}
+                        <div className={`space-y-2 max-h-64 overflow-y-auto ${!testData.selectedSubjects.physics ? 'opacity-40 pointer-events-none' : ''}`}>
+                          {Array.from({ length: 45 }, (_, i) => i).map((idx) => renderOMRRow(idx, !testData.selectedSubjects.physics))}
                         </div>
                       </div>
-                    )
-                  })}
+                      {/* Chemistry */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-green-500" />
+                          <h4 className="text-sm font-semibold">
+                            Chemistry (Q{showOldNumbering ? '51' : '46'}-Q{showOldNumbering ? '95' : '90'})
+                          </h4>
+                          {!testData.selectedSubjects.chemistry && (
+                            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                          )}
+                        </div>
+                        <div className={`space-y-2 max-h-64 overflow-y-auto ${!testData.selectedSubjects.chemistry ? 'opacity-40 pointer-events-none' : ''}`}>
+                          {Array.from({ length: 45 }, (_, i) => i + 45).map((idx) => renderOMRRow(idx, !testData.selectedSubjects.chemistry))}
+                        </div>
+                      </div>
+                      {/* Biology */}
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-teal-500" />
+                          <h4 className="text-sm font-semibold">
+                            Biology (Q{showOldNumbering ? '101' : '91'}-Q{showOldNumbering ? '195' : '180'})
+                          </h4>
+                          {!(testData.selectedSubjects.botany && testData.selectedSubjects.zoology) && (
+                            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                          )}
+                        </div>
+                        <div className={`space-y-2 max-h-96 overflow-y-auto ${!(testData.selectedSubjects.botany && testData.selectedSubjects.zoology) ? 'opacity-40 pointer-events-none' : ''}`}>
+                          {Array.from({ length: 90 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !(testData.selectedSubjects.botany && testData.selectedSubjects.zoology)))}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {SUBJECTS.map((subject) => {
+                        const isSelected = testData.selectedSubjects[subject.id as keyof typeof testData.selectedSubjects]
+                        const oldStart = subject.startIdx === 0 ? 1 : subject.startIdx === 45 ? 51 : subject.startIdx === 90 ? 101 : 151
+                        const oldEnd = oldStart + 44
+                        return (
+                          <div key={subject.id} className="space-y-3">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${subject.color}`} />
+                              <h4 className="text-sm font-semibold">
+                                {subject.name} (Q{showOldNumbering ? oldStart : subject.startIdx + 1}-Q{showOldNumbering ? oldEnd : subject.endIdx})
+                              </h4>
+                              {!isSelected && (
+                                <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                              )}
+                            </div>
+                            <div className={`space-y-2 max-h-64 overflow-y-auto ${!isSelected ? 'opacity-40 pointer-events-none' : ''}`}>
+                              {Array.from({ length: 45 }, (_, i) => i + subject.startIdx).map((idx) => renderOMRRow(idx, !isSelected))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
                 </div>
               </div>
 

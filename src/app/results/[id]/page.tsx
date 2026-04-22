@@ -39,6 +39,9 @@ const SUBJECTS = [
   { id: 'zoology', name: 'Zoology', color: 'bg-purple-500' },
 ]
 
+// Combined biology subject
+const BIOLOGY_SUBJECT = { id: 'biology', name: 'Biology', color: 'bg-teal-500' }
+
 export default function ResultsPage() {
   const params = useParams()
   const router = useRouter()
@@ -177,6 +180,7 @@ export default function ResultsPage() {
       timeSlipEnabled: record.timeSlipEnabled,
       timeTaken: record.timeTaken,
       timeSlipMinutes: record.timeSlipMinutes,
+      combinedBiology: record.combinedBiology || false,
     }
 
     localStorage.setItem(`analysis-${record.id}`, JSON.stringify(overall))
@@ -189,7 +193,16 @@ export default function ResultsPage() {
     const id = params.id as string
     const data = localStorage.getItem(`analysis-${id}`)
     if (data) {
-      setAnalysisData(JSON.parse(data))
+      const parsed = JSON.parse(data)
+      // Also check test record for combinedBiology (in case cached analysis is stale)
+      if (parsed.combinedBiology === undefined) {
+        const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
+        const record = records.find((r: any) => r.id === id)
+        if (record?.combinedBiology) {
+          parsed.combinedBiology = true
+        }
+      }
+      setAnalysisData(parsed)
     } else {
       const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
       const record = records.find((r: any) => r.id === id)
@@ -219,8 +232,53 @@ export default function ResultsPage() {
     return analysisData.selectedSubjects[subjectId as keyof typeof analysisData.selectedSubjects]
   }
 
-  // Get selected subjects list
-  const getSelectedSubjectsList = () => SUBJECTS.filter(s => isSubjectSelected(s.id))
+  // Check if combined biology mode is active
+  const isCombinedBiology = (): boolean => {
+    return analysisData?.combinedBiology === true
+  }
+
+  // Get display subjects based on combined biology mode
+  const getDisplaySubjects = () => {
+    if (isCombinedBiology()) {
+      return [
+        SUBJECTS[0], // Physics
+        SUBJECTS[1], // Chemistry
+        BIOLOGY_SUBJECT, // Biology (combined)
+      ]
+    }
+    return SUBJECTS
+  }
+
+  // Get selected subjects list for display
+  const getSelectedSubjectsList = () => {
+    const displaySubjects = getDisplaySubjects()
+    return displaySubjects.filter(s => {
+      if (s.id === 'biology') {
+        return isSubjectSelected('botany') && isSubjectSelected('zoology')
+      }
+      return isSubjectSelected(s.id)
+    })
+  }
+
+  // Get subject marks for display
+  const getSubjectMarks = (subjectId: string): number => {
+    if (subjectId === 'biology') {
+      return (analysisData?.botanyMarks || 0) + (analysisData?.zoologyMarks || 0)
+    }
+    return analysisData?.[`${subjectId}Marks` as keyof typeof analysisData] as number || 0
+  }
+
+  // Get max marks for a subject
+  const getSubjectMaxMarks = (subjectId: string): number => {
+    if (subjectId === 'biology') return 360
+    return 180
+  }
+
+  // Get question count for a subject
+  const getSubjectQuestionCount = (subjectId: string): number => {
+    if (subjectId === 'biology') return 90
+    return 45
+  }
 
   // Format time slip for display
   const formatTimeSlip = (): { text: string; isOver: boolean; hours: number; minutes: number; slip: number } | null => {
@@ -479,9 +537,13 @@ export default function ResultsPage() {
             <h2 className="text-xl font-bold">Subject-wise Performance</h2>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {SUBJECTS.map((subject) => {
-              const isSelected = isSubjectSelected(subject.id)
-              const marks = analysisData[`${subject.id}Marks` as keyof typeof analysisData] as number || 0
+            {getDisplaySubjects().map((subject) => {
+              const isSelected = subject.id === 'biology'
+                ? isSubjectSelected('botany') && isSubjectSelected('zoology')
+                : isSubjectSelected(subject.id)
+              const marks = getSubjectMarks(subject.id)
+              const maxMarks = getSubjectMaxMarks(subject.id)
+              const questionCount = getSubjectQuestionCount(subject.id)
               
               if (!isSelected) return null
               
@@ -492,10 +554,10 @@ export default function ResultsPage() {
                       <div className={`w-2 h-2 rounded-full ${subject.color}`} />
                       <h3 className="text-sm font-semibold">{subject.name}</h3>
                     </div>
-                    <span className="text-[10px] text-muted-foreground">45 Qs</span>
+                    <span className="text-[10px] text-muted-foreground">{questionCount} Qs</span>
                   </div>
-                  <div className={`text-xl font-bold ${getMarksColor(marks, 180)}`}>
-                    {marks}/180
+                  <div className={`text-xl font-bold ${getMarksColor(marks, maxMarks)}`}>
+                    {marks}/{maxMarks}
                   </div>
                   <div className="text-[10px] text-muted-foreground mt-1">marks</div>
                 </div>
@@ -507,11 +569,33 @@ export default function ResultsPage() {
         {/* Subject-wise Detailed Breakdown */}
         {analysisData.subjects && (
           <div className="grid gap-6">
-            {analysisData.subjects.map((subject: SubjectStats) => {
+            {(isCombinedBiology() ? (() => {
+              // Combine Botany + Zoology into Biology when combined mode
+              const botany = analysisData.subjects.find((s: SubjectStats) => s.name === 'Botany')
+              const zoology = analysisData.subjects.find((s: SubjectStats) => s.name === 'Zoology')
+              const physics = analysisData.subjects.find((s: SubjectStats) => s.name === 'Physics')
+              const chemistry = analysisData.subjects.find((s: SubjectStats) => s.name === 'Chemistry')
+              const biology: SubjectStats = {
+                name: 'Biology',
+                correct: (botany?.correct || 0) + (zoology?.correct || 0),
+                wrong: (botany?.wrong || 0) + (zoology?.wrong || 0),
+                unmarked: (botany?.unmarked || 0) + (zoology?.unmarked || 0),
+                markedQuestions: [...(botany?.markedQuestions || []), ...(zoology?.markedQuestions || [])],
+                wrongQuestions: [...(botany?.wrongQuestions || []), ...(zoology?.wrongQuestions || [])],
+                unmarkedQuestions: [...(botany?.unmarkedQuestions || []), ...(zoology?.unmarkedQuestions || [])],
+                marks: (botany?.marks || 0) + (zoology?.marks || 0),
+              }
+              return [physics, chemistry, biology].filter(Boolean) as SubjectStats[]
+            })() : analysisData.subjects).map((subject: SubjectStats) => {
               const subjectId = subject.name.toLowerCase()
-              const isSelected = isSubjectSelected(subjectId)
+              const isSelected = subjectId === 'biology'
+                ? isSubjectSelected('botany') && isSubjectSelected('zoology')
+                : isSubjectSelected(subjectId)
               
               if (!isSelected) return null
+              
+              const subjectMaxMarks = subjectId === 'biology' ? 360 : 180
+              const subjectQuestionCount = subjectId === 'biology' ? 90 : 45
               
               return (
                 <Card key={subject.name} className="border-2 hover:border-primary/50 transition-all duration-300">
@@ -519,10 +603,10 @@ export default function ResultsPage() {
                     <div className="flex items-center justify-between">
                       <CardTitle>{subject.name}</CardTitle>
                       <div className="text-right">
-                        <div className={`text-2xl font-bold ${getMarksColor(subject.marks, 180)}`}>
+                        <div className={`text-2xl font-bold ${getMarksColor(subject.marks, subjectMaxMarks)}`}>
                           {subject.marks}
                         </div>
-                        <div className="text-[10px] text-muted-foreground">/ 180 marks</div>
+                        <div className="text-[10px] text-muted-foreground">/ {subjectMaxMarks} marks</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-4 mt-3 pt-3 border-t">
@@ -632,11 +716,13 @@ export default function ResultsPage() {
                   <TableBody>
                     {analysisData.questions.map((result: QuestionResult) => {
                       const marks = result.isUnmarked ? 0 : result.isCorrect ? 4 : -1
+                      // Show "Biology" instead of "Botany"/"Zoology" when combined
+                      const displaySubject = isCombinedBiology() && (result.subject === 'Botany' || result.subject === 'Zoology') ? 'Biology' : result.subject
                       return (
                         <TableRow key={result.questionNumber}>
                           <TableCell className="font-medium">Q{getDisplayQuestionNumber(result.questionNumber)}</TableCell>
                           <TableCell>
-                            <Badge variant="outline">{result.subject}</Badge>
+                            <Badge variant="outline">{displaySubject}</Badge>
                           </TableCell>
                           <TableCell className={result.isUnmarked ? 'text-muted-foreground' : ''}>
                             {result.isUnmarked ? '-' : result.marked}

@@ -3,79 +3,53 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Upload, Download, Trash2, AlertCircle, CheckCircle2, Shield, Cloud, CloudOff, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Upload, Download, Trash2, AlertCircle, CheckCircle2, Shield, Cloud, CloudOff, RefreshCw, Clock, RotateCcw, ChevronDown, ChevronUp, Database } from 'lucide-react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
 import { Moon, Sun, Monitor } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { useAuth, pushToCloud, fullSync } from '@/lib/auth-store'
+import { useAuth, pushToCloud, pullFromCloud, hasCloudData, getBackups, createBackup, restoreBackup, deleteBackup } from '@/lib/auth-store'
+import type { BackupEntry } from '@/lib/auth-store'
 
 export default function SettingsPage() {
   const [testCount, setTestCount] = useState(0)
   const [importing, setImporting] = useState(false)
   const [clearing, setClearing] = useState(false)
-  const [syncing, setSyncing] = useState(false)
+  const [pushing, setPushing] = useState(false)
+  const [pulling, setPulling] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [cloudHasData, setCloudHasData] = useState(false)
+  const [backups, setBackups] = useState<BackupEntry[]>([])
+  const [showBackups, setShowBackups] = useState(false)
+  const [restoring, setRestoring] = useState<string | null>(null)
   const { theme, setTheme } = useTheme()
   const { user, token, isAuthenticated } = useAuth()
 
   useEffect(() => {
     setMounted(true)
     loadTestCount()
+    loadBackups()
   }, [])
+
+  useEffect(() => {
+    // Check if user has cloud data when authenticated
+    if (isAuthenticated && token) {
+      hasCloudData(token).then(hasData => {
+        setCloudHasData(hasData)
+      }).catch(() => {})
+    } else {
+      setCloudHasData(false)
+    }
+  }, [isAuthenticated, token])
 
   const loadTestCount = () => {
     const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
     setTestCount(records.length)
   }
 
-  const handleExport = () => {
-    const records = localStorage.getItem('testRecords')
-    if (!records) {
-      toast.error('No data to export')
-      return
-    }
-
-    const recordsArray = JSON.parse(records)
-
-    // OPTIMIZED: Only export essential data - markedAnswers + correctAnswers
-    // Everything else can be recalculated from these two strings
-    const slimRecords = recordsArray.map((record: any) => ({
-      id: record.id,
-      n: record.testName, // shortened key
-      m: record.markedAnswers, // marked answers (180 chars)
-      c: record.correctAnswers, // correct answers (180 chars)
-      s: record.selectedSubjects, // which subjects selected
-      ts: record.timeSlipEnabled ? {
-        e: 1,
-        h: record.timeTaken?.hours ?? 0,
-        mi: record.timeTaken?.minutes ?? 0,
-        sm: record.timeSlipMinutes ?? 0,
-      } : undefined,
-      no: record.notes || undefined,
-      d: record.createdAt, // date
-    }))
-
-    const exportData = {
-      v: 2, // version 2 = optimized format
-      e: new Date().toISOString().split('T')[0],
-      r: slimRecords,
-    }
-
-    const dataStr = JSON.stringify(exportData) // No pretty printing - saves space
-    const dataBlob = new Blob([dataStr], { type: 'application/json' })
-    const url = URL.createObjectURL(dataBlob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `neet-backup-${new Date().toISOString().split('T')[0]}.json`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-
-    const sizeKB = Math.round(dataBlob.size / 1024)
-    toast.success(`Exported ${recordsArray.length} test(s) — ${sizeKB} KB`)
+  const loadBackups = () => {
+    setBackups(getBackups())
   }
 
   const recalculateRecord = (record: any) => {
@@ -127,6 +101,55 @@ export default function SettingsPage() {
     }
   }
 
+  const handleExport = () => {
+    const records = localStorage.getItem('testRecords')
+    if (!records) {
+      toast.error('No data to export')
+      return
+    }
+
+    const recordsArray = JSON.parse(records)
+
+    // OPTIMIZED: Only export essential data - markedAnswers + correctAnswers
+    // Everything else can be recalculated from these two strings
+    const slimRecords = recordsArray.map((record: any) => ({
+      id: record.id,
+      n: record.testName, // shortened key
+      m: record.markedAnswers, // marked answers (180 chars)
+      c: record.correctAnswers, // correct answers (180 chars)
+      s: record.selectedSubjects, // which subjects selected
+      cb: record.combinedBiology || undefined, // combined biology mode
+      ts: record.timeSlipEnabled ? {
+        e: 1,
+        h: record.timeTaken?.hours ?? 0,
+        mi: record.timeTaken?.minutes ?? 0,
+        sm: record.timeSlipMinutes ?? 0,
+      } : undefined,
+      no: record.notes || undefined,
+      d: record.createdAt, // date
+    }))
+
+    const exportData = {
+      v: 2, // version 2 = optimized format
+      e: new Date().toISOString().split('T')[0],
+      r: slimRecords,
+    }
+
+    const dataStr = JSON.stringify(exportData) // No pretty printing - saves space
+    const dataBlob = new Blob([dataStr], { type: 'application/json' })
+    const url = URL.createObjectURL(dataBlob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `neet-backup-${new Date().toISOString().split('T')[0]}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    const sizeKB = Math.round(dataBlob.size / 1024)
+    toast.success(`Exported ${recordsArray.length} test(s) — ${sizeKB} KB`)
+  }
+
   const handleImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -149,6 +172,7 @@ export default function SettingsPage() {
             markedAnswers: r.m,
             correctAnswers: r.c,
             selectedSubjects: r.s || { physics: true, chemistry: true, botany: true, zoology: true },
+            combinedBiology: r.cb || false,
             timeSlipEnabled: r.ts?.e === 1,
             timeTaken: r.ts ? { hours: r.ts.h, minutes: r.ts.mi } : null,
             timeSlipMinutes: r.ts?.sm ?? null,
@@ -239,27 +263,109 @@ export default function SettingsPage() {
     }
   }
 
-  const handleFullSync = async () => {
+  const handlePushToCloud = async () => {
     if (!isAuthenticated || !token) {
-      toast.error('Please login to sync data')
+      toast.error('Please login to update cloud data')
       return
     }
 
-    setSyncing(true)
+    const localRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
+    if (localRecords.length === 0) {
+      toast.error('No local data to push')
+      return
+    }
+
+    // Confirm before pushing
+    if (!confirm(`This will overwrite your cloud data with ${localRecords.length} local test(s). A backup will be created automatically. Continue?`)) {
+      return
+    }
+
+    setPushing(true)
     try {
-      const result = await fullSync(token)
-      loadTestCount()
+      // Create backup before pushing
+      const backup = createBackup()
+      loadBackups()
       
+      const result = await pushToCloud(token)
       if (result.success) {
-        toast.success(`Sync complete! Pushed: ${result.pushedCount}, Pulled: ${result.pulledCount}, Total: ${result.totalCount}`)
+        setCloudHasData(true)
+        toast.success(`Cloud updated! ${result.count} test(s) pushed. Backup saved (${backup.recordCount} records).`)
       } else {
-        toast.error('Sync partially failed')
+        toast.error('Failed to update cloud data')
       }
     } catch {
-      toast.error('Sync failed — network error')
+      toast.error('Failed to update cloud data — network error')
     } finally {
-      setSyncing(false)
+      setPushing(false)
     }
+  }
+
+  const handlePullFromCloud = async () => {
+    if (!isAuthenticated || !token) {
+      toast.error('Please login to pull cloud data')
+      return
+    }
+
+    setPulling(true)
+    try {
+      const result = await pullFromCloud(token)
+      if (result.success) {
+        loadTestCount()
+        setCloudHasData(true)
+        if (result.newFromCloud > 0) {
+          toast.success(`Pulled ${result.newFromCloud} new test(s) from cloud (total: ${result.totalCount})`)
+        } else {
+          toast.success('Your local data is already up to date with cloud')
+        }
+      } else {
+        toast.error('Failed to pull cloud data')
+      }
+    } catch {
+      toast.error('Failed to pull cloud data — network error')
+    } finally {
+      setPulling(false)
+    }
+  }
+
+  const handleRestoreBackup = (backupId: string) => {
+    const backup = backups.find(b => b.id === backupId)
+    if (!backup) return
+
+    if (!confirm(`Restore backup from ${new Date(backup.timestamp).toLocaleString()}? This will replace your current data with ${backup.recordCount} test(s). A backup of your current data will be saved first.`)) {
+      return
+    }
+
+    setRestoring(backupId)
+    try {
+      const success = restoreBackup(backupId)
+      if (success) {
+        loadTestCount()
+        loadBackups()
+        toast.success(`Restored backup! ${backup.recordCount} test(s) recovered.`)
+      } else {
+        toast.error('Failed to restore backup')
+      }
+    } catch {
+      toast.error('Failed to restore backup')
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  const handleDeleteBackup = (backupId: string) => {
+    if (!confirm('Delete this backup permanently?')) return
+    deleteBackup(backupId)
+    loadBackups()
+    toast.success('Backup deleted')
+  }
+
+  const formatBackupTime = (timestamp: string) => {
+    return new Date(timestamp).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
   }
 
   return (
@@ -299,7 +405,7 @@ export default function SettingsPage() {
               </div>
               <CardDescription>
                 {isAuthenticated
-                  ? `Sync your data across devices (logged in as ${user?.username})`
+                  ? `Manage your cloud data (logged in as ${user?.username})`
                   : 'Login to sync your data across devices'
                 }
               </CardDescription>
@@ -323,13 +429,35 @@ export default function SettingsPage() {
                       <span>Auto-sync enabled — your tests are automatically saved to cloud when you create, edit, or delete them</span>
                     </div>
                   </div>
+
+                  {/* UPDATE DATA Button (Push) - only shows if user has cloud data */}
+                  {cloudHasData && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>Update Data will overwrite your cloud data with current local data. A backup is saved automatically.</span>
+                      </div>
+                      <Button
+                        onClick={handlePushToCloud}
+                        disabled={pushing || testCount === 0}
+                        className="w-full h-11"
+                        variant="default"
+                      >
+                        <Database className={`w-4 h-4 mr-2 ${pushing ? 'animate-pulse' : ''}`} />
+                        {pushing ? 'Updating Cloud...' : 'UPDATE DATA (Push to Cloud)'}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Pull Data Button */}
                   <Button
-                    onClick={handleFullSync}
-                    disabled={syncing}
+                    onClick={handlePullFromCloud}
+                    disabled={pulling}
                     className="w-full h-11"
+                    variant="outline"
                   >
-                    <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-                    {syncing ? 'Syncing...' : 'Full Sync (Pull + Push)'}
+                    <RefreshCw className={`w-4 h-4 mr-2 ${pulling ? 'animate-spin' : ''}`} />
+                    {pulling ? 'Pulling Data...' : 'Pull Data (From Cloud)'}
                   </Button>
                 </div>
               ) : (
@@ -348,6 +476,76 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          {/* Backup History - only shows if there are backups */}
+          {backups.length > 0 && (
+            <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
+              <CardHeader className="pb-3">
+                <button
+                  onClick={() => setShowBackups(!showBackups)}
+                  className="flex items-center justify-between w-full text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-amber-500" />
+                    <div>
+                      <CardTitle className="text-base">Backup History</CardTitle>
+                      <CardDescription>{backups.length} backup(s) saved — revert if you make a mistake</CardDescription>
+                    </div>
+                  </div>
+                  {showBackups ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
+                </button>
+              </CardHeader>
+              {showBackups && (
+                <CardContent className="space-y-2">
+                  <div className="text-xs text-muted-foreground mb-3">
+                    Backups are created automatically when you press &quot;UPDATE DATA&quot;. You can revert up to {5} times.
+                  </div>
+                  <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                    {backups.map((backup) => (
+                      <div
+                        key={backup.id}
+                        className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center">
+                            <RotateCcw className="w-4 h-4 text-amber-500" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium">{backup.recordCount} test(s)</div>
+                            <div className="text-xs text-muted-foreground">{formatBackupTime(backup.timestamp)}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRestoreBackup(backup.id)}
+                            disabled={restoring === backup.id}
+                            className="h-8 text-xs"
+                          >
+                            {restoring === backup.id ? (
+                              <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <RotateCcw className="w-3 h-3 mr-1" />
+                            )}
+                            Restore
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDeleteBackup(backup.id)}
+                            className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          )}
 
           {/* Data Management */}
           <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
@@ -500,7 +698,7 @@ export default function SettingsPage() {
             <CardContent className="space-y-3">
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm font-medium">NEET Test Analyzer v2.0.0</span>
+                <span className="text-sm font-medium">NEET Test Analyzer v2.1.0</span>
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
@@ -508,11 +706,15 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+                <span className="text-sm">Combined Biology mode for Botany + Zoology</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
+                <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
                 <span className="text-sm">Cloud sync with secure authentication</span>
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm">Optimized export format (minimal file size)</span>
+                <span className="text-sm">Auto-backup system with 5-level revert</span>
               </div>
             </CardContent>
           </Card>

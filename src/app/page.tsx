@@ -18,6 +18,9 @@ const SUBJECTS = [
   { id: 'zoology', name: 'Zoology', shortName: 'Zoo', color: 'bg-purple-500' },
 ]
 
+// Combined biology subject for display
+const BIOLOGY_SUBJECT = { id: 'biology', name: 'Biology', shortName: 'Bio', color: 'bg-teal-500' }
+
 interface TestRecord {
   id: string
   testName: string
@@ -40,6 +43,7 @@ interface TestRecord {
     zoology: boolean
   }
   notes?: string
+  combinedBiology?: boolean
 }
 
 export default function Home() {
@@ -161,6 +165,15 @@ export default function Home() {
   }
 
   const getSelectedSubjects = (record: TestRecord) => {
+    if (record.combinedBiology) {
+      // In combined mode, show 3 subjects: Physics, Chemistry, Biology
+      const subjects = [SUBJECTS[0], SUBJECTS[1], BIOLOGY_SUBJECT]
+      if (!record.selectedSubjects) return subjects
+      return subjects.filter(s => {
+        if (s.id === 'biology') return record.selectedSubjects!.botany && record.selectedSubjects!.zoology
+        return record.selectedSubjects![s.id as keyof typeof record.selectedSubjects]
+      })
+    }
     if (!record.selectedSubjects) return SUBJECTS
     return SUBJECTS.filter(s => record.selectedSubjects![s.id as keyof typeof record.selectedSubjects])
   }
@@ -344,7 +357,7 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {selectedSubjects.length < 4 && (
+                    {selectedSubjects.length < (record.combinedBiology ? 3 : 4) && (
                       <div className="px-3 pt-2">
                         <div className="flex items-center gap-1 flex-wrap">
                           {selectedSubjects.map((subject) => (
@@ -358,50 +371,90 @@ export default function Home() {
                     )}
 
                     <div className="p-3 grid grid-cols-2 gap-2 relative">
-                      {isSubjectSelected(record, 'physics') && (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                            <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                    {record.combinedBiology ? (
+                      <>
+                        {isSubjectSelected(record, 'physics') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
+                              {record.physicsMarks}
+                            </span>
                           </div>
-                          <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
-                            {record.physicsMarks}
-                          </span>
-                        </div>
-                      )}
-                      {isSubjectSelected(record, 'chemistry') && (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                            <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                        )}
+                        {isSubjectSelected(record, 'chemistry') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
+                              {record.chemistryMarks}
+                            </span>
                           </div>
-                          <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
-                            {record.chemistryMarks}
-                          </span>
-                        </div>
-                      )}
-                      {isSubjectSelected(record, 'botany') && (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                            <span className="text-xs font-medium text-muted-foreground">Bot</span>
+                        )}
+                        {isSubjectSelected(record, 'botany') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Bio</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks + record.zoologyMarks, 360)}`}>
+                              {record.botanyMarks + record.zoologyMarks}
+                            </span>
                           </div>
-                          <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks, 180)}`}>
-                            {record.botanyMarks}
-                          </span>
-                        </div>
-                      )}
-                      {isSubjectSelected(record, 'zoology') && (
-                        <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                            <span className="text-xs font-medium text-muted-foreground">Zoo</span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {isSubjectSelected(record, 'physics') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
+                              {record.physicsMarks}
+                            </span>
                           </div>
-                          <span className={`text-xs font-bold ${getMarksColor(record.zoologyMarks, 180)}`}>
-                            {record.zoologyMarks}
-                          </span>
-                        </div>
-                      )}
+                        )}
+                        {isSubjectSelected(record, 'chemistry') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
+                              {record.chemistryMarks}
+                            </span>
+                          </div>
+                        )}
+                        {isSubjectSelected(record, 'botany') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Bot</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks, 180)}`}>
+                              {record.botanyMarks}
+                            </span>
+                          </div>
+                        )}
+                        {isSubjectSelected(record, 'zoology') && (
+                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                              <span className="text-xs font-medium text-muted-foreground">Zoo</span>
+                            </div>
+                            <span className={`text-xs font-bold ${getMarksColor(record.zoologyMarks, 180)}`}>
+                              {record.zoologyMarks}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
 
                       {record.notes && (
                         <div className="col-span-2 flex items-start gap-2 py-2 px-2 rounded-lg bg-amber-500/10 border border-amber-500/20">

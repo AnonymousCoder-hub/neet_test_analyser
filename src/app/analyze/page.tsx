@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { ArrowLeft, Home, Calculator, Keyboard, MousePointer2, ScanLine, Timer, BookOpen, StickyNote } from 'lucide-react'
+import { ArrowLeft, Home, Calculator, Keyboard, MousePointer2, ScanLine, Timer, BookOpen, StickyNote, Leaf } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
@@ -43,6 +43,9 @@ export default function AnalyzePage() {
   // Notes field
   const [notes, setNotes] = useState('')
   
+  // Combined Biology Mode
+  const [combinedBiology, setCombinedBiology] = useState(false)
+
   // Time Slip Feature
   const [timeSlipEnabled, setTimeSlipEnabled] = useState(false)
   const [timeHours, setTimeHours] = useState(3)
@@ -51,18 +54,62 @@ export default function AnalyzePage() {
   const { theme, setTheme } = useTheme()
   const router = useRouter()
 
+  // Display subjects (merge Botany+Zoology into Biology when combined)
+  const displaySubjects = combinedBiology
+    ? [
+        { id: 'physics', name: 'Physics', color: 'bg-blue-500', startIdx: 0, endIdx: 45 },
+        { id: 'chemistry', name: 'Chemistry', color: 'bg-green-500', startIdx: 45, endIdx: 90 },
+        { id: 'biology', name: 'Biology', color: 'bg-teal-500', startIdx: 90, endIdx: 180 },
+      ]
+    : SUBJECTS
+
+  // Check if a display subject is selected
+  const isDisplaySubjectSelected = (subjectId: string): boolean => {
+    if (combinedBiology && subjectId === 'biology') {
+      return selectedSubjects.botany && selectedSubjects.zoology
+    }
+    return selectedSubjects[subjectId as keyof typeof selectedSubjects]
+  }
+
   // Get selected subjects info
-  const getSelectedSubjectsList = () => SUBJECTS.filter(s => selectedSubjects[s.id as keyof typeof selectedSubjects])
+  const getSelectedSubjectsList = () => displaySubjects.filter(s => isDisplaySubjectSelected(s.id))
   const getSelectedSubjectsCount = () => getSelectedSubjectsList().length
-  const getMaxMarks = () => getSelectedSubjectsCount() * 180
-  const getTotalQuestions = () => getSelectedSubjectsCount() * 45
+  const getMaxMarks = () => {
+    if (combinedBiology) {
+      let marks = 0
+      if (selectedSubjects.physics) marks += 180
+      if (selectedSubjects.chemistry) marks += 180
+      if (selectedSubjects.botany) marks += 360 // Biology = 90 Qs × 4
+      return marks
+    }
+    return getSelectedSubjectsCount() * 180
+  }
+  const getTotalQuestions = () => {
+    if (combinedBiology) {
+      let count = 0
+      if (selectedSubjects.physics) count += 45
+      if (selectedSubjects.chemistry) count += 45
+      if (selectedSubjects.botany) count += 90
+      return count
+    }
+    return getSelectedSubjectsCount() * 45
+  }
 
   // Toggle subject selection
   const toggleSubject = (subjectId: string) => {
-    setSelectedSubjects(prev => ({
-      ...prev,
-      [subjectId]: !prev[subjectId as keyof typeof prev]
-    }))
+    if (combinedBiology && subjectId === 'biology') {
+      const bothSelected = selectedSubjects.botany && selectedSubjects.zoology
+      setSelectedSubjects(prev => ({
+        ...prev,
+        botany: !bothSelected,
+        zoology: !bothSelected,
+      }))
+    } else {
+      setSelectedSubjects(prev => ({
+        ...prev,
+        [subjectId]: !prev[subjectId as keyof typeof prev]
+      }))
+    }
   }
 
   const parseAnswers = (answerString: string): string[] => {
@@ -257,6 +304,8 @@ export default function AnalyzePage() {
       timeSlipEnabled,
       timeTaken: timeSlipEnabled ? { hours: timeHours, minutes: timeMinutes } : null,
       timeSlipMinutes: timeSlipEnabled ? calculateTimeSlip() : null,
+      // Combined Biology
+      combinedBiology,
     }
 
     const record = {
@@ -281,6 +330,8 @@ export default function AnalyzePage() {
       timeSlipEnabled,
       timeTaken: timeSlipEnabled ? { hours: timeHours, minutes: timeMinutes } : null,
       timeSlipMinutes: timeSlipEnabled ? calculateTimeSlip() : null,
+      // Combined Biology
+      combinedBiology,
     }
 
     const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
@@ -343,12 +394,12 @@ export default function AnalyzePage() {
                   {inputMode === 'manual' ? (
                     <>
                       Enter 180 digits representing your marked answers (0 = no option marked) and the correct answers.<br />
-                      <span className="text-xs text-muted-foreground/80">First 45: Physics, Next 45: Chemistry, Next 45: Botany, Last 45: Zoology</span>
+                      <span className="text-xs text-muted-foreground/80">{combinedBiology ? 'First 45: Physics, Next 45: Chemistry, Last 90: Biology' : 'First 45: Physics, Next 45: Chemistry, Next 45: Botany, Last 45: Zoology'}</span>
                     </>
                   ) : inputMode === 'omr' ? (
                     <>
                       Select your answers for each question visually using the option buttons.<br />
-                      <span className="text-xs text-muted-foreground/80">First 45: Physics, Next 45: Chemistry, Next 45: Botany, Last 45: Zoology</span>
+                      <span className="text-xs text-muted-foreground/80">{combinedBiology ? 'First 45: Physics, Next 45: Chemistry, Last 90: Biology' : 'First 45: Physics, Next 45: Chemistry, Next 45: Botany, Last 45: Zoology'}</span>
                     </>
                   ) : (
                     <>
@@ -408,9 +459,37 @@ export default function AnalyzePage() {
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {SUBJECTS.map((subject) => {
-                  const isSelected = selectedSubjects[subject.id as keyof typeof selectedSubjects]
+              {/* Combined Biology Mode Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg bg-teal-500/5 border border-teal-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-teal-500/10 flex items-center justify-center">
+                    <Leaf className="w-4 h-4 text-teal-500" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold">Combined Biology Mode</h4>
+                    <p className="text-xs text-muted-foreground">Merge Botany + Zoology into single Biology section</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCombinedBiology(!combinedBiology)}
+                  className={`relative w-12 h-7 rounded-full transition-all duration-300 ease-in-out ${
+                    combinedBiology 
+                      ? 'bg-teal-500 shadow-lg shadow-teal-500/30' 
+                      : 'bg-input hover:bg-muted'
+                  }`}
+                  aria-pressed={combinedBiology}
+                >
+                  <span
+                    className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out ${
+                      combinedBiology ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className={`grid gap-3 ${combinedBiology ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4'}`}>
+                {displaySubjects.map((subject) => {
+                  const isSelected = isDisplaySubjectSelected(subject.id)
                   return (
                     <button
                       key={subject.id}
@@ -652,37 +731,55 @@ export default function AnalyzePage() {
                   </div>
                 </div>
 
-                {/* Botany Section */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                    <h3 className="text-sm font-semibold">
-                      Botany (Q{showOldNumbering ? '101' : '91'}-Q{showOldNumbering ? '145' : '135'})
-                    </h3>
-                    {!selectedSubjects.botany && (
-                      <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
-                    )}
+                {/* Biology / Botany+Zoology Section */}
+                {combinedBiology ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-teal-500" />
+                      <h3 className="text-sm font-semibold">
+                        Biology (Q{showOldNumbering ? '101' : '91'}-Q{showOldNumbering ? '195' : '180'})
+                      </h3>
+                      {!(selectedSubjects.botany && selectedSubjects.zoology) && (
+                        <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                      )}
+                    </div>
+                    <div className={`space-y-2 max-h-96 overflow-y-auto ${!(selectedSubjects.botany && selectedSubjects.zoology) ? 'opacity-40 pointer-events-none' : ''}`}>
+                      {Array.from({ length: 90 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !(selectedSubjects.botany && selectedSubjects.zoology)))}
+                    </div>
                   </div>
-                  <div className={`space-y-2 max-h-64 overflow-y-auto ${!selectedSubjects.botany ? 'opacity-40 pointer-events-none' : ''}`}>
-                    {Array.from({ length: 45 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !selectedSubjects.botany))}
-                  </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                        <h3 className="text-sm font-semibold">
+                          Botany (Q{showOldNumbering ? '101' : '91'}-Q{showOldNumbering ? '145' : '135'})
+                        </h3>
+                        {!selectedSubjects.botany && (
+                          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                        )}
+                      </div>
+                      <div className={`space-y-2 max-h-64 overflow-y-auto ${!selectedSubjects.botany ? 'opacity-40 pointer-events-none' : ''}`}>
+                        {Array.from({ length: 45 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !selectedSubjects.botany))}
+                      </div>
+                    </div>
 
-                {/* Zoology Section */}
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-purple-500" />
-                    <h3 className="text-sm font-semibold">
-                      Zoology (Q{showOldNumbering ? '151' : '136'}-Q{showOldNumbering ? '195' : '180'})
-                    </h3>
-                    {!selectedSubjects.zoology && (
-                      <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
-                    )}
-                  </div>
-                  <div className={`space-y-2 max-h-64 overflow-y-auto ${!selectedSubjects.zoology ? 'opacity-40 pointer-events-none' : ''}`}>
-                    {Array.from({ length: 45 }, (_, i) => i + 135).map((idx) => renderOMRRow(idx, !selectedSubjects.zoology))}
-                  </div>
-                </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-purple-500" />
+                        <h3 className="text-sm font-semibold">
+                          Zoology (Q{showOldNumbering ? '151' : '136'}-Q{showOldNumbering ? '195' : '180'})
+                        </h3>
+                        {!selectedSubjects.zoology && (
+                          <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">Not Selected</span>
+                        )}
+                      </div>
+                      <div className={`space-y-2 max-h-64 overflow-y-auto ${!selectedSubjects.zoology ? 'opacity-40 pointer-events-none' : ''}`}>
+                        {Array.from({ length: 45 }, (_, i) => i + 135).map((idx) => renderOMRRow(idx, !selectedSubjects.zoology))}
+                      </div>
+                    </div>
+                  </>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Correct Answers (180 digits)</label>
@@ -780,33 +877,49 @@ export default function AnalyzePage() {
                       </div>
                     </div>
 
-                    {/* Botany Section */}
-                    <div className={`space-y-2 mb-3 ${!selectedSubjects.botany ? 'opacity-40' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                        <h3 className="text-xs font-semibold">Botany</h3>
-                        {!selectedSubjects.botany && (
-                          <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Not Selected</span>
-                        )}
+                    {/* Biology / Botany+Zoology Section */}
+                    {combinedBiology ? (
+                      <div className={`space-y-2 mb-3 ${!(selectedSubjects.botany && selectedSubjects.zoology) ? 'opacity-40' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-teal-500" />
+                          <h3 className="text-xs font-semibold">Biology</h3>
+                          {!(selectedSubjects.botany && selectedSubjects.zoology) && (
+                            <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Not Selected</span>
+                          )}
+                        </div>
+                        <div className="space-y-1 max-h-48 overflow-y-auto">
+                          {Array.from({ length: 90 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !(selectedSubjects.botany && selectedSubjects.zoology)))}
+                        </div>
                       </div>
-                      <div className="space-y-1 max-h-32 overflow-y-auto">
-                        {Array.from({ length: 45 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !selectedSubjects.botany))}
-                      </div>
-                    </div>
+                    ) : (
+                      <>
+                        <div className={`space-y-2 mb-3 ${!selectedSubjects.botany ? 'opacity-40' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <h3 className="text-xs font-semibold">Botany</h3>
+                            {!selectedSubjects.botany && (
+                              <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Not Selected</span>
+                            )}
+                          </div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {Array.from({ length: 45 }, (_, i) => i + 90).map((idx) => renderOMRRow(idx, !selectedSubjects.botany))}
+                          </div>
+                        </div>
 
-                    {/* Zoology Section */}
-                    <div className={`space-y-2 ${!selectedSubjects.zoology ? 'opacity-40' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-purple-500" />
-                        <h3 className="text-xs font-semibold">Zoology</h3>
-                        {!selectedSubjects.zoology && (
-                          <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Not Selected</span>
-                        )}
-                      </div>
-                      <div className="space-y-1 max-h-32 overflow-y-auto">
-                        {Array.from({ length: 45 }, (_, i) => i + 135).map((idx) => renderOMRRow(idx, !selectedSubjects.zoology))}
-                      </div>
-                    </div>
+                        <div className={`space-y-2 ${!selectedSubjects.zoology ? 'opacity-40' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-purple-500" />
+                            <h3 className="text-xs font-semibold">Zoology</h3>
+                            {!selectedSubjects.zoology && (
+                              <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Not Selected</span>
+                            )}
+                          </div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            {Array.from({ length: 45 }, (_, i) => i + 135).map((idx) => renderOMRRow(idx, !selectedSubjects.zoology))}
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 

@@ -76,6 +76,80 @@ export function recalculateRecord(record: any) {
   }
 }
 
+// ===== BACKUP SYSTEM =====
+const BACKUP_KEY = 'neet-backups'
+const MAX_BACKUPS = 5
+
+export interface BackupEntry {
+  id: string
+  timestamp: string
+  recordCount: number
+  data: any[] // the testRecords array snapshot
+}
+
+export function getBackups(): BackupEntry[] {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+export function createBackup(): BackupEntry {
+  const currentData = JSON.parse(localStorage.getItem('testRecords') || '[]')
+  const backup: BackupEntry = {
+    id: Date.now().toString(),
+    timestamp: new Date().toISOString(),
+    recordCount: currentData.length,
+    data: currentData,
+  }
+
+  const backups = getBackups()
+  backups.unshift(backup) // newest first
+  
+  // Keep only last MAX_BACKUPS
+  while (backups.length > MAX_BACKUPS) {
+    backups.pop()
+  }
+  
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backups))
+  return backup
+}
+
+export function restoreBackup(backupId: string): boolean {
+  try {
+    const backups = getBackups()
+    const backup = backups.find(b => b.id === backupId)
+    if (!backup) return false
+
+    // Save current state as a backup before restoring (so user can undo the restore)
+    // But only if the current data is different from what we're restoring
+    const currentData = JSON.parse(localStorage.getItem('testRecords') || '[]')
+    if (currentData.length > 0) {
+      createBackup() // auto-backup current state before restore
+    }
+
+    localStorage.setItem('testRecords', JSON.stringify(backup.data))
+    
+    // Clear stale analysis cache
+    backup.data.forEach((r: any) => {
+      localStorage.removeItem(`analysis-${r.id}`)
+    })
+    
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function deleteBackup(backupId: string): void {
+  const backups = getBackups().filter(b => b.id !== backupId)
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backups))
+}
+
+// ===== SYNC FUNCTIONS =====
+
 // Helper: push ALL local test records to cloud (full sync)
 // Uses fullSync=true so cloud matches local exactly (deletes records removed locally)
 export async function pushToCloud(token: string): Promise<{ success: boolean; count: number }> {
@@ -102,9 +176,8 @@ export async function pushToCloud(token: string): Promise<{ success: boolean; co
   }
 }
 
-// Helper: pull cloud records and merge with local
-// Cloud records are kept for duplicates (same ID), local-only records are preserved
-export async function pullFromCloud(token: string): Promise<{ success: boolean; cloudCount: number; localCount: number; totalCount: number }> {
+// Helper: pull cloud records and MERGE with local (local wins on duplicate ID to preserve local changes)
+export async function pullFromCloud(token: string): Promise<{ success: boolean; cloudCount: number; localCount: number; totalCount: number; newFromCloud: number }> {
   try {
     const res = await fetch('/api/test-records', {
       headers: { 'Authorization': `Bearer ${token}` },
@@ -117,16 +190,66 @@ export async function pullFromCloud(token: string): Promise<{ success: boolean; 
       const cloudRecords: any[] = data.records.map((r: any) => recalculateRecord(r))
       const cloudCount = cloudRecords.length
 
-      // Merge: cloud first (takes priority on same ID), then local-only records
-      const merged = [...cloudRecords, ...localRecords]
+      // Merge: local first (takes priority on same ID to preserve local changes), then cloud-only records
+      const merged = [...localRecords, ...cloudRecords]
       const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
+      
+      // Count how many new records came from cloud
+      const localIds = new Set(localRecords.map((r: any) => r.id))
+      const newFromCloud = cloudRecords.filter((r: any) => !localIds.has(r.id)).length
+      
       localStorage.setItem('testRecords', JSON.stringify(unique))
 
-      return { success: true, cloudCount, localCount, totalCount: unique.length }
+      return { success: true, cloudCount, localCount, totalCount: unique.length, newFromCloud }
     }
-    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0 }
+    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0, newFromCloud: 0 }
   } catch {
-    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0 }
+    return { success: false, cloudCount: 0, localCount: 0, totalCount: 0, newFromCloud: 0 }
+  }
+}
+
+// Helper: merge local + cloud data properly (local wins on conflict)
+// Used on login to ensure no data loss
+export async function mergeLocalAndCloud(token: string): Promise<{ success: boolean; localCount: number; cloudCount: number; totalCount: number; newFromCloud: number }> {
+  try {
+    // Step 1: Get cloud records
+    const res = await fetch('/api/test-records', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const data = await res.json()
+
+    if (!res.ok || !data.records) {
+      return { success: false, localCount: 0, cloudCount: 0, totalCount: 0, newFromCloud: 0 }
+    }
+
+    const localRecords: any[] = JSON.parse(localStorage.getItem('testRecords') || '[]')
+    const localCount = localRecords.length
+    const cloudRecords: any[] = data.records.map((r: any) => recalculateRecord(r))
+    const cloudCount = cloudRecords.length
+
+    // Merge: local first (preserves local versions on conflict), then add cloud-only records
+    const merged = [...localRecords, ...cloudRecords]
+    const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
+    
+    const localIds = new Set(localRecords.map((r: any) => r.id))
+    const newFromCloud = cloudRecords.filter((r: any) => !localIds.has(r.id)).length
+
+    // Save merged result locally
+    localStorage.setItem('testRecords', JSON.stringify(unique))
+
+    // Step 2: Push merged result to cloud (so cloud also has the full merged set)
+    await fetch('/api/test-records', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ records: unique, fullSync: true }),
+    })
+
+    return { success: true, localCount, cloudCount, totalCount: unique.length, newFromCloud }
+  } catch {
+    return { success: false, localCount: 0, cloudCount: 0, totalCount: 0, newFromCloud: 0 }
   }
 }
 
@@ -165,6 +288,19 @@ export async function deleteCloudRecord(token: string, recordId: string): Promis
   }
 }
 
+// Helper: check if user has data in cloud
+export async function hasCloudData(token: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/test-records', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const data = await res.json()
+    return res.ok && data.records && data.records.length > 0
+  } catch {
+    return false
+  }
+}
+
 // Helper: full 2-way sync — push local to cloud, then pull cloud to local
 export async function fullSync(token: string): Promise<{ success: boolean; pushedCount: number; pulledCount: number; totalCount: number }> {
   try {
@@ -177,7 +313,7 @@ export async function fullSync(token: string): Promise<{ success: boolean; pushe
     return {
       success: pushResult.success && pullResult.success,
       pushedCount: pushResult.count,
-      pulledCount: pullResult.cloudCount,
+      pulledCount: pullResult.newFromCloud,
       totalCount: pullResult.totalCount,
     }
   } catch {

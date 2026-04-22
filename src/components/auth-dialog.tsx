@@ -24,8 +24,7 @@ import {
   AlertCircle,
   Loader2,
 } from 'lucide-react'
-import { useAuth } from '@/lib/auth-store'
-import { pullFromCloud } from '@/lib/auth-store'
+import { useAuth, mergeLocalAndCloud } from '@/lib/auth-store'
 import { toast } from 'sonner'
 
 interface AuthDialogProps {
@@ -123,23 +122,11 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
       login(data.user, data.token)
       toast.success(`Welcome back, ${data.user.username}!`)
 
-      // Auto-sync: PUSH local data first, then PULL from cloud
+      // Auto-sync: MERGE local and cloud data (local wins on conflict, no data loss)
       try {
-        const localRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
-        const localCount = localRecords.length
-
-        // Push local data to cloud first (preserves local-only tests)
-        if (localCount > 0) {
-          const pushResult = await pushToCloud(data.token)
-          if (pushResult.success && pushResult.count > 0) {
-            toast.success(`Pushed ${pushResult.count} local test(s) to cloud`)
-          }
-        }
-
-        // Then pull cloud data and merge
-        const pullResult = await pullFromCloud(data.token)
-        if (pullResult.success && pullResult.cloudCount > 0) {
-          toast.success(`Synced ${pullResult.cloudCount} test(s) from cloud (total: ${pullResult.totalCount})`)
+        const mergeResult = await mergeLocalAndCloud(data.token)
+        if (mergeResult.success && mergeResult.newFromCloud > 0) {
+          toast.success(`Synced ${mergeResult.newFromCloud} test(s) from cloud (total: ${mergeResult.totalCount})`)
         }
       } catch {
         // Silent fail - cloud sync is optional

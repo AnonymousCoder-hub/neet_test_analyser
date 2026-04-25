@@ -9,7 +9,7 @@ import { useTheme } from 'next-themes'
 import { Moon, Sun, Monitor } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { useAuth, pushToCloud, pullFromCloud, hasCloudData, getBackups, createBackup, restoreBackup, deleteBackup } from '@/lib/auth-store'
+import { useAuth, pushToCloud, pullFromCloud, hasCloudData, getCloudBackups, createCloudBackup, restoreCloudBackup, deleteCloudBackup } from '@/lib/auth-store'
 import type { BackupEntry } from '@/lib/auth-store'
 
 export default function SettingsPage() {
@@ -29,17 +29,15 @@ export default function SettingsPage() {
   useEffect(() => {
     setMounted(true)
     loadTestCount()
-    loadBackups()
   }, [])
 
   useEffect(() => {
-    // Check if user has cloud data when authenticated
     if (isAuthenticated && token) {
-      hasCloudData(token).then(hasData => {
-        setCloudHasData(hasData)
-      }).catch(() => {})
+      hasCloudData(token).then(hasData => setCloudHasData(hasData)).catch(() => {})
+      loadBackups()
     } else {
       setCloudHasData(false)
+      setBackups([])
     }
   }, [isAuthenticated, token])
 
@@ -48,8 +46,10 @@ export default function SettingsPage() {
     setTestCount(records.length)
   }
 
-  const loadBackups = () => {
-    setBackups(getBackups())
+  const loadBackups = async () => {
+    if (!isAuthenticated || !token) return
+    const cloudBackups = await getCloudBackups(token)
+    setBackups(cloudBackups)
   }
 
   const recalculateRecord = (record: any) => {
@@ -110,15 +110,13 @@ export default function SettingsPage() {
 
     const recordsArray = JSON.parse(records)
 
-    // OPTIMIZED: Only export essential data - markedAnswers + correctAnswers
-    // Everything else can be recalculated from these two strings
     const slimRecords = recordsArray.map((record: any) => ({
       id: record.id,
-      n: record.testName, // shortened key
-      m: record.markedAnswers, // marked answers (180 chars)
-      c: record.correctAnswers, // correct answers (180 chars)
-      s: record.selectedSubjects, // which subjects selected
-      cb: record.combinedBiology || undefined, // combined biology mode
+      n: record.testName,
+      m: record.markedAnswers,
+      c: record.correctAnswers,
+      s: record.selectedSubjects,
+      cb: record.combinedBiology || undefined,
       ts: record.timeSlipEnabled ? {
         e: 1,
         h: record.timeTaken?.hours ?? 0,
@@ -126,16 +124,16 @@ export default function SettingsPage() {
         sm: record.timeSlipMinutes ?? 0,
       } : undefined,
       no: record.notes || undefined,
-      d: record.createdAt, // date
+      d: record.createdAt,
     }))
 
     const exportData = {
-      v: 2, // version 2 = optimized format
+      v: 2,
       e: new Date().toISOString().split('T')[0],
       r: slimRecords,
     }
 
-    const dataStr = JSON.stringify(exportData) // No pretty printing - saves space
+    const dataStr = JSON.stringify(exportData)
     const dataBlob = new Blob([dataStr], { type: 'application/json' })
     const url = URL.createObjectURL(dataBlob)
     const link = document.createElement('a')
@@ -164,7 +162,6 @@ export default function SettingsPage() {
 
         let recordsToImport: any[] = []
 
-        // Support v2 optimized format
         if (importedData.v === 2 && Array.isArray(importedData.r)) {
           recordsToImport = importedData.r.map((r: any) => ({
             id: r.id,
@@ -179,23 +176,17 @@ export default function SettingsPage() {
             notes: r.no || '',
             createdAt: r.d || new Date().toISOString(),
           }))
-          // Recalculate computed fields
           recordsToImport = recordsToImport.map((record: any) => recalculateRecord(record))
-        }
-        // Support v1 format (original)
-        else if (importedData.testRecords && Array.isArray(importedData.testRecords)) {
+        } else if (importedData.testRecords && Array.isArray(importedData.testRecords)) {
           recordsToImport = importedData.testRecords.map((r: any) => recalculateRecord(r))
-        }
-        // Support plain array
-        else if (Array.isArray(importedData)) {
+        } else if (Array.isArray(importedData)) {
           recordsToImport = importedData.map((r: any) => recalculateRecord(r))
         } else {
           throw new Error('Invalid data format')
         }
 
         const isValid = recordsToImport.every((record: any) =>
-          record.markedAnswers &&
-          record.correctAnswers
+          record.markedAnswers && record.correctAnswers
         )
 
         if (!isValid) {
@@ -209,14 +200,12 @@ export default function SettingsPage() {
         )
         localStorage.setItem('testRecords', JSON.stringify(uniqueRecords))
 
-        // Clear stale analysis cache since we can regenerate from data
         uniqueRecords.forEach((r: any) => {
           localStorage.removeItem(`analysis-${r.id}`)
         })
 
         setTestCount(uniqueRecords.length)
         
-        // Auto-push imported records to cloud if logged in
         if (isAuthenticated && token) {
           pushToCloud(token).catch(() => {})
         }
@@ -240,7 +229,6 @@ export default function SettingsPage() {
     if (confirm('Are you sure you want to delete all test records? This action cannot be undone.')) {
       setClearing(true)
       localStorage.removeItem('testRecords')
-      // Also clear all analysis cache
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith('analysis-')) localStorage.removeItem(key)
       })
@@ -248,9 +236,7 @@ export default function SettingsPage() {
       setClearing(false)
       toast.success('All test records cleared!')
       
-      // Also clear cloud data if logged in
       if (isAuthenticated && token) {
-        // Push empty records to effectively clear cloud
         fetch('/api/test-records', {
           method: 'POST',
           headers: {
@@ -275,21 +261,22 @@ export default function SettingsPage() {
       return
     }
 
-    // Confirm before pushing
-    if (!confirm(`This will overwrite your cloud data with ${localRecords.length} local test(s). A backup will be created automatically. Continue?`)) {
+    if (!confirm(`Update cloud with ${localRecords.length} local test(s)? A backup will be saved automatically.`)) {
       return
     }
 
     setPushing(true)
     try {
-      // Create backup before pushing
-      const backup = createBackup()
-      loadBackups()
+      // Create cloud backup before pushing
+      const backup = await createCloudBackup(token)
+      if (backup) {
+        loadBackups()
+      }
       
       const result = await pushToCloud(token)
       if (result.success) {
         setCloudHasData(true)
-        toast.success(`Cloud updated! ${result.count} test(s) pushed. Backup saved (${backup.recordCount} records).`)
+        toast.success(`Cloud updated! ${result.count} test(s) pushed.${backup ? ' Backup saved.' : ''}`)
       } else {
         toast.error('Failed to update cloud data')
       }
@@ -327,17 +314,17 @@ export default function SettingsPage() {
     }
   }
 
-  const handleRestoreBackup = (backupId: string) => {
+  const handleRestoreBackup = async (backupId: string) => {
     const backup = backups.find(b => b.id === backupId)
     if (!backup) return
 
-    if (!confirm(`Restore backup from ${new Date(backup.timestamp).toLocaleString()}? This will replace your current data with ${backup.recordCount} test(s). A backup of your current data will be saved first.`)) {
+    if (!confirm(`Restore backup with ${backup.recordCount} test(s)? A backup of your current data will be saved first.`)) {
       return
     }
 
     setRestoring(backupId)
     try {
-      const success = restoreBackup(backupId)
+      const success = await restoreCloudBackup(token!, backupId)
       if (success) {
         loadTestCount()
         loadBackups()
@@ -352,11 +339,15 @@ export default function SettingsPage() {
     }
   }
 
-  const handleDeleteBackup = (backupId: string) => {
+  const handleDeleteBackup = async (backupId: string) => {
     if (!confirm('Delete this backup permanently?')) return
-    deleteBackup(backupId)
-    loadBackups()
-    toast.success('Backup deleted')
+    const success = await deleteCloudBackup(token!, backupId)
+    if (success) {
+      loadBackups()
+      toast.success('Backup deleted')
+    } else {
+      toast.error('Failed to delete backup')
+    }
   }
 
   const formatBackupTime = (timestamp: string) => {
@@ -426,25 +417,25 @@ export default function SettingsPage() {
                   <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3">
                     <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-xs font-medium">
                       <Cloud className="w-3.5 h-3.5" />
-                      <span>Auto-sync enabled — your tests are automatically saved to cloud when you create, edit, or delete them</span>
+                      <span>Auto-sync enabled — your tests sync to cloud on create, edit, or delete</span>
                     </div>
                   </div>
 
                   {/* UPDATE DATA Button (Push) - only shows if user has cloud data */}
                   {cloudHasData && (
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        <span>Update Data will overwrite your cloud data with current local data. A backup is saved automatically.</span>
+                      <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <span className="text-xs text-amber-600 dark:text-amber-400">Update Data overwrites cloud with your local data. Backup saved automatically.</span>
                       </div>
                       <Button
                         onClick={handlePushToCloud}
                         disabled={pushing || testCount === 0}
-                        className="w-full h-11"
+                        className="w-full min-h-[44px] text-sm"
                         variant="default"
                       >
-                        <Database className={`w-4 h-4 mr-2 ${pushing ? 'animate-pulse' : ''}`} />
-                        {pushing ? 'Updating Cloud...' : 'UPDATE DATA (Push to Cloud)'}
+                        <Database className={`w-4 h-4 mr-2 flex-shrink-0 ${pushing ? 'animate-pulse' : ''}`} />
+                        <span className="truncate">{pushing ? 'Updating Cloud...' : 'UPDATE DATA (Push to Cloud)'}</span>
                       </Button>
                     </div>
                   )}
@@ -453,11 +444,11 @@ export default function SettingsPage() {
                   <Button
                     onClick={handlePullFromCloud}
                     disabled={pulling}
-                    className="w-full h-11"
+                    className="w-full min-h-[44px] text-sm"
                     variant="outline"
                   >
-                    <RefreshCw className={`w-4 h-4 mr-2 ${pulling ? 'animate-spin' : ''}`} />
-                    {pulling ? 'Pulling Data...' : 'Pull Data (From Cloud)'}
+                    <RefreshCw className={`w-4 h-4 mr-2 flex-shrink-0 ${pulling ? 'animate-spin' : ''}`} />
+                    <span className="truncate">{pulling ? 'Pulling Data...' : 'Pull Data (From Cloud)'}</span>
                   </Button>
                 </div>
               ) : (
@@ -477,8 +468,8 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Backup History - only shows if there are backups */}
-          {backups.length > 0 && (
+          {/* Backup History */}
+          {isAuthenticated && backups.length > 0 && (
             <Card className="border-2 hover:border-primary/50 transition-all duration-300 hover:shadow-lg">
               <CardHeader className="pb-3">
                 <button
@@ -489,7 +480,7 @@ export default function SettingsPage() {
                     <Clock className="w-5 h-5 text-amber-500" />
                     <div>
                       <CardTitle className="text-base">Backup History</CardTitle>
-                      <CardDescription>{backups.length} backup(s) saved — revert if you make a mistake</CardDescription>
+                      <CardDescription>{backups.length} backup(s) — revert if you make a mistake</CardDescription>
                     </div>
                   </div>
                   {showBackups ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
@@ -498,30 +489,30 @@ export default function SettingsPage() {
               {showBackups && (
                 <CardContent className="space-y-2">
                   <div className="text-xs text-muted-foreground mb-3">
-                    Backups are created automatically when you press &quot;UPDATE DATA&quot;. You can revert up to {5} times.
+                    Backups are saved to cloud when you press &quot;UPDATE DATA&quot;. Accessible from any device.
                   </div>
                   <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                     {backups.map((backup) => (
                       <div
                         key={backup.id}
-                        className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors"
+                        className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors gap-2"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center flex-shrink-0">
                             <RotateCcw className="w-4 h-4 text-amber-500" />
                           </div>
-                          <div>
+                          <div className="min-w-0">
                             <div className="text-sm font-medium">{backup.recordCount} test(s)</div>
-                            <div className="text-xs text-muted-foreground">{formatBackupTime(backup.timestamp)}</div>
+                            <div className="text-xs text-muted-foreground truncate">{formatBackupTime(backup.timestamp)}</div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() => handleRestoreBackup(backup.id)}
                             disabled={restoring === backup.id}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs px-2.5"
                           >
                             {restoring === backup.id ? (
                               <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
@@ -534,7 +525,7 @@ export default function SettingsPage() {
                             size="sm"
                             variant="ghost"
                             onClick={() => handleDeleteBackup(backup.id)}
-                            className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="w-3 h-3" />
                           </Button>
@@ -571,15 +562,13 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* FIXED: Download icon for Export, Upload icon for Import */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   onClick={handleExport}
                   disabled={testCount === 0}
-                  className="flex-1 h-11 text-base font-medium hover:scale-105 transition-transform duration-200 active:scale-95 shadow-md hover:shadow-lg"
-                  size="default"
+                  className="flex-1 min-h-[44px] text-sm font-medium hover:scale-[1.02] transition-transform duration-200 active:scale-95 shadow-md hover:shadow-lg"
                 >
-                  <Download className="w-4 h-4 mr-2" />
+                  <Download className="w-4 h-4 mr-2 flex-shrink-0" />
                   Export Data
                 </Button>
                 <div className="flex-1">
@@ -595,11 +584,11 @@ export default function SettingsPage() {
                     <Button
                       variant="outline"
                       disabled={importing}
-                      className="w-full h-11 text-base font-medium cursor-pointer hover:scale-105 transition-transform duration-200 active:scale-95 hover:border-primary/50"
+                      className="w-full min-h-[44px] text-sm font-medium cursor-pointer hover:scale-[1.02] transition-transform duration-200 active:scale-95 hover:border-primary/50"
                       asChild
                     >
                       <span>
-                        <Upload className="w-4 h-4 mr-2" />
+                        <Upload className="w-4 h-4 mr-2 flex-shrink-0" />
                         {importing ? 'Importing...' : 'Import Data'}
                       </span>
                     </Button>
@@ -653,7 +642,7 @@ export default function SettingsPage() {
                     variant={mounted && theme === 'light' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setTheme('light')}
-                    className={`flex-1 sm:flex-none h-11 px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
+                    className={`flex-1 sm:flex-none min-h-[44px] px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
                       mounted && theme === 'light' ? 'shadow-md hover:shadow-lg' : 'hover:border-primary/50'
                     }`}
                   >
@@ -664,7 +653,7 @@ export default function SettingsPage() {
                     variant={mounted && theme === 'dark' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setTheme('dark')}
-                    className={`flex-1 sm:flex-none h-11 px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
+                    className={`flex-1 sm:flex-none min-h-[44px] px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
                       mounted && theme === 'dark' ? 'shadow-md hover:shadow-lg' : 'hover:border-primary/50'
                     }`}
                   >
@@ -675,7 +664,7 @@ export default function SettingsPage() {
                     variant={mounted && theme === 'system' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setTheme('system')}
-                    className={`flex-1 sm:flex-none h-11 px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
+                    className={`flex-1 sm:flex-none min-h-[44px] px-4 hover:scale-105 transition-transform duration-200 active:scale-95 ${
                       mounted && theme === 'system' ? 'shadow-md hover:shadow-lg' : 'hover:border-primary/50'
                     }`}
                   >
@@ -698,11 +687,7 @@ export default function SettingsPage() {
             <CardContent className="space-y-3">
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm font-medium">NEET Test Analyzer v2.1.0</span>
-              </div>
-              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
-                <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm">Supports 180 questions across 4 subjects</span>
+                <span className="text-sm font-medium">NEET Test Analyzer v2.2.0</span>
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
@@ -710,11 +695,15 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm">Cloud sync with secure authentication</span>
+                <span className="text-sm">Cloud sync with auto-pull on page load</span>
               </div>
               <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
                 <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
-                <span className="text-sm">Auto-backup system with 5-level revert</span>
+                <span className="text-sm">Cloud-based backups (accessible from any device)</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors duration-200">
+                <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+                <span className="text-sm">5-level revert with auto-backup before push</span>
               </div>
             </CardContent>
           </Card>

@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Plus, Settings, History, Award, Calendar, Trash2, Edit2, Timer, StickyNote, Moon, Sun, Cloud, CloudOff, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { ProfileMenu } from '@/components/profile-menu'
-import { useAuth, deleteCloudRecord, fullSync } from '@/lib/auth-store'
+import { useAuth, deleteCloudRecord, pullFromCloud } from '@/lib/auth-store'
 import { toast } from 'sonner'
 
 // Subject configuration
@@ -53,6 +53,7 @@ export default function Home() {
   const { theme, setTheme } = useTheme()
   const { user, token, isAuthenticated } = useAuth()
   const router = useRouter()
+  const hasSyncedRef = useRef(false)
 
   const loadRecords = useCallback(() => {
     const localRecords = localStorage.getItem('testRecords')
@@ -68,16 +69,23 @@ export default function Home() {
     loadRecords()
   }, [loadRecords])
 
-  // Auto-sync when user logs in
+  // Auto-sync: pull from cloud on page load when authenticated
   useEffect(() => {
-    if (isAuthenticated && token) {
-      fullSync(token).then(result => {
-        if (result.success && (result.pushedCount > 0 || result.pulledCount > 0)) {
-          loadRecords() // Refresh local display
+    if (isAuthenticated && token && !hasSyncedRef.current) {
+      hasSyncedRef.current = true
+      setSyncing(true)
+      pullFromCloud(token).then(result => {
+        if (result.success && result.newFromCloud > 0) {
+          // Reload records from localStorage after pull
+          const updatedRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
+          setTestRecords(updatedRecords)
+          toast.success(`Synced ${result.newFromCloud} test(s) from cloud`)
         }
-      }).catch(() => {})
+      }).catch(() => {}).finally(() => {
+        setSyncing(false)
+      })
     }
-  }, [isAuthenticated, token, loadRecords])
+  }, [isAuthenticated, token])
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -101,13 +109,13 @@ export default function Home() {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
+    e.preventDefault()
     if (confirm('Are you sure you want to delete this test?')) {
       const updatedRecords = testRecords.filter(r => r.id !== id)
       setTestRecords(updatedRecords)
       localStorage.setItem('testRecords', JSON.stringify(updatedRecords))
       localStorage.removeItem(`analysis-${id}`)
       
-      // Also delete from cloud if logged in
       if (isAuthenticated && token) {
         deleteCloudRecord(token, id).catch(() => {})
       }
@@ -120,6 +128,7 @@ export default function Home() {
 
   const handleEdit = (e: React.MouseEvent, id: string) => {
     e.stopPropagation()
+    e.preventDefault()
     router.push(`/edit/${id}`)
   }
 
@@ -127,10 +136,16 @@ export default function Home() {
     if (!isAuthenticated || !token) return
     setSyncing(true)
     try {
-      const result = await fullSync(token)
-      loadRecords() // Refresh
+      const result = await pullFromCloud(token)
+      // Always reload from localStorage after pull
+      const updatedRecords = JSON.parse(localStorage.getItem('testRecords') || '[]')
+      setTestRecords(updatedRecords)
       if (result.success) {
-        toast.success(`Sync complete! ${result.pushedCount} pushed, ${result.pulledCount} pulled (total: ${result.totalCount})`)
+        if (result.newFromCloud > 0) {
+          toast.success(`Synced ${result.newFromCloud} test(s) from cloud (total: ${result.totalCount})`)
+        } else {
+          toast.success('Data is up to date with cloud')
+        }
       } else {
         toast.error('Sync failed')
       }
@@ -166,7 +181,6 @@ export default function Home() {
 
   const getSelectedSubjects = (record: TestRecord) => {
     if (record.combinedBiology) {
-      // In combined mode, show 3 subjects: Physics, Chemistry, Biology
       const subjects = [SUBJECTS[0], SUBJECTS[1], BIOLOGY_SUBJECT]
       if (!record.selectedSubjects) return subjects
       return subjects.filter(s => {
@@ -200,7 +214,6 @@ export default function Home() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {/* Cloud sync status when logged in */}
             {isAuthenticated && (
               <Button
                 variant="ghost"
@@ -222,7 +235,6 @@ export default function Home() {
                 <Settings className="w-4 h-4" />
               </Button>
             </Link>
-            {/* Profile Menu */}
             <ProfileMenu />
           </div>
         </div>
@@ -234,13 +246,14 @@ export default function Home() {
         {isAuthenticated && (
           <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
             <Cloud className="w-3.5 h-3.5 text-green-500" />
-            <span>Synced as <strong className="text-foreground">{user?.username}</strong> — data auto-syncs to cloud</span>
+            <span>Synced as <strong className="text-foreground">{user?.username}</strong> — data auto-syncs from cloud</span>
+            {syncing && <RefreshCw className="w-3 h-3 animate-spin ml-1" />}
           </div>
         )}
         {!isAuthenticated && (
           <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
             <CloudOff className="w-3.5 h-3.5" />
-            <span>Data stored locally only — <button onClick={() => {}} className="text-primary hover:underline">login to sync</button></span>
+            <span>Data stored locally only — login to sync across devices</span>
           </div>
         )}
 
@@ -322,22 +335,33 @@ export default function Home() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {testRecords.map((record) => {
                 const timeSlip = formatTimeSlip(record)
-                const selectedSubjects = getSelectedSubjects(record)
+                const displaySubjects = getSelectedSubjects(record)
+                const isCombined = record.combinedBiology
                 return (
                   <div
                     key={record.id}
                     onClick={() => handleCardClick(record.id)}
                     className="group relative rounded-xl border-2 border-border bg-card hover:border-primary hover:shadow-lg hover:shadow-primary/20 transition-all duration-150 hover:-translate-y-0.5 active:scale-95 cursor-pointer overflow-hidden"
                   >
+                    {/* Delete button - top right */}
                     <button
                       onClick={(e) => handleDelete(e, record.id)}
-                      className="absolute top-2 right-2 z-10 text-muted-foreground hover:text-red-500 transition-colors duration-200"
+                      className="absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-card/80 backdrop-blur-sm text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors duration-200"
                       title="Delete test"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
 
-                    <div className="p-4 bg-gradient-to-r from-primary/5 to-primary/10 border-b border-border group-hover:from-primary/10 group-hover:to-primary/20 transition-colors pr-12">
+                    {/* Edit button - top right (next to delete) */}
+                    <button
+                      onClick={(e) => handleEdit(e, record.id)}
+                      className="absolute top-2 right-12 z-10 w-8 h-8 flex items-center justify-center rounded-full bg-card/80 backdrop-blur-sm text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors duration-200"
+                      title="Edit test"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <div className="p-4 bg-gradient-to-r from-primary/5 to-primary/10 border-b border-border group-hover:from-primary/10 group-hover:to-primary/20 transition-colors pr-24">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
                           <h3 className="text-sm font-semibold truncate group-hover:text-primary transition-colors">
@@ -357,104 +381,103 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {selectedSubjects.length < (record.combinedBiology ? 3 : 4) && (
-                      <div className="px-3 pt-2">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {selectedSubjects.map((subject) => (
-                            <div key={subject.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium">
-                              <div className={`w-1.5 h-1.5 rounded-full ${subject.color}`} />
-                              {subject.shortName}
-                            </div>
-                          ))}
-                        </div>
+                    {/* Subject badges - always show when combined or when not all subjects selected */}
+                    <div className="px-3 pt-2">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {displaySubjects.map((subject) => (
+                          <div key={subject.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium">
+                            <div className={`w-1.5 h-1.5 rounded-full ${subject.color}`} />
+                            {subject.shortName}
+                          </div>
+                        ))}
                       </div>
-                    )}
+                    </div>
 
-                    <div className="p-3 grid grid-cols-2 gap-2 relative">
-                    {record.combinedBiology ? (
-                      <>
-                        {isSubjectSelected(record, 'physics') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                    <div className="p-3 grid grid-cols-2 gap-2">
+                      {isCombined ? (
+                        <>
+                          {isSubjectSelected(record, 'physics') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
+                                {record.physicsMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
-                              {record.physicsMarks}
-                            </span>
-                          </div>
-                        )}
-                        {isSubjectSelected(record, 'chemistry') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                          )}
+                          {isSubjectSelected(record, 'chemistry') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
+                                {record.chemistryMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
-                              {record.chemistryMarks}
-                            </span>
-                          </div>
-                        )}
-                        {isSubjectSelected(record, 'botany') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-teal-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Bio</span>
+                          )}
+                          {isSubjectSelected(record, 'botany') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-teal-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Bio</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks + record.zoologyMarks, 360)}`}>
+                                {record.botanyMarks + record.zoologyMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks + record.zoologyMarks, 360)}`}>
-                              {record.botanyMarks + record.zoologyMarks}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <>
-                        {isSubjectSelected(record, 'physics') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {isSubjectSelected(record, 'physics') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Phy</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
+                                {record.physicsMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.physicsMarks, 180)}`}>
-                              {record.physicsMarks}
-                            </span>
-                          </div>
-                        )}
-                        {isSubjectSelected(record, 'chemistry') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                          )}
+                          {isSubjectSelected(record, 'chemistry') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Chem</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
+                                {record.chemistryMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.chemistryMarks, 180)}`}>
-                              {record.chemistryMarks}
-                            </span>
-                          </div>
-                        )}
-                        {isSubjectSelected(record, 'botany') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Bot</span>
+                          )}
+                          {isSubjectSelected(record, 'botany') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Bot</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks, 180)}`}>
+                                {record.botanyMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.botanyMarks, 180)}`}>
-                              {record.botanyMarks}
-                            </span>
-                          </div>
-                        )}
-                        {isSubjectSelected(record, 'zoology') && (
-                          <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                              <span className="text-xs font-medium text-muted-foreground">Zoo</span>
+                          )}
+                          {isSubjectSelected(record, 'zoology') && (
+                            <div className="flex items-center justify-between p-2 rounded-lg bg-muted/30 group-hover:bg-muted/50 transition-colors">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+                                <span className="text-xs font-medium text-muted-foreground">Zoo</span>
+                              </div>
+                              <span className={`text-xs font-bold ${getMarksColor(record.zoologyMarks, 180)}`}>
+                                {record.zoologyMarks}
+                              </span>
                             </div>
-                            <span className={`text-xs font-bold ${getMarksColor(record.zoologyMarks, 180)}`}>
-                              {record.zoologyMarks}
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    )}
+                          )}
+                        </>
+                      )}
 
                       {record.notes && (
                         <div className="col-span-2 flex items-start gap-2 py-2 px-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
@@ -473,14 +496,6 @@ export default function Home() {
                           <span>{timeSlip.text}</span>
                         </div>
                       )}
-
-                      <button
-                        onClick={(e) => handleEdit(e, record.id)}
-                        className="absolute bottom-2 right-2 z-10 text-muted-foreground hover:text-primary transition-colors duration-200"
-                        title="Edit answer key"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
                     </div>
                   </div>
                 )

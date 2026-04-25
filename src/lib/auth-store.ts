@@ -76,82 +76,133 @@ export function recalculateRecord(record: any) {
   }
 }
 
-// ===== BACKUP SYSTEM =====
-const BACKUP_KEY = 'neet-backups'
-const MAX_BACKUPS = 5
+// ===== BACKUP SYSTEM (Cloud-based via Supabase) =====
 
 export interface BackupEntry {
   id: string
   timestamp: string
   recordCount: number
-  data: any[] // the testRecords array snapshot
+  data?: any[] // only populated when restoring
 }
 
-export function getBackups(): BackupEntry[] {
+// Get backups from cloud
+export async function getCloudBackups(token: string): Promise<BackupEntry[]> {
   try {
-    const raw = localStorage.getItem(BACKUP_KEY)
-    return raw ? JSON.parse(raw) : []
+    const res = await fetch('/api/backups', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+    const data = await res.json()
+    if (res.ok && data.backups) {
+      return data.backups.map((b: any) => ({
+        id: b.id,
+        timestamp: b.timestamp || b.created_at,
+        recordCount: b.record_count,
+      }))
+    }
+    return []
   } catch {
     return []
   }
 }
 
-export function createBackup(): BackupEntry {
-  const currentData = JSON.parse(localStorage.getItem('testRecords') || '[]')
-  const backup: BackupEntry = {
-    id: Date.now().toString(),
-    timestamp: new Date().toISOString(),
-    recordCount: currentData.length,
-    data: currentData,
-  }
-
-  const backups = getBackups()
-  backups.unshift(backup) // newest first
-  
-  // Keep only last MAX_BACKUPS
-  while (backups.length > MAX_BACKUPS) {
-    backups.pop()
-  }
-  
-  localStorage.setItem(BACKUP_KEY, JSON.stringify(backups))
-  return backup
-}
-
-export function restoreBackup(backupId: string): boolean {
+// Create a cloud backup
+export async function createCloudBackup(token: string): Promise<BackupEntry | null> {
   try {
-    const backups = getBackups()
-    const backup = backups.find(b => b.id === backupId)
-    if (!backup) return false
-
-    // Save current state as a backup before restoring (so user can undo the restore)
-    // But only if the current data is different from what we're restoring
     const currentData = JSON.parse(localStorage.getItem('testRecords') || '[]')
-    if (currentData.length > 0) {
-      createBackup() // auto-backup current state before restore
+    const id = Date.now().toString()
+    const backup: BackupEntry = {
+      id,
+      timestamp: new Date().toISOString(),
+      recordCount: currentData.length,
     }
 
-    localStorage.setItem('testRecords', JSON.stringify(backup.data))
-    
+    const res = await fetch('/api/backups', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        id,
+        timestamp: backup.timestamp,
+        recordCount: backup.recordCount,
+        data: currentData,
+      }),
+    })
+
+    if (res.ok) {
+      return backup
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Get backup data from cloud for restore
+export async function getCloudBackupData(token: string, backupId: string): Promise<any[] | null> {
+  try {
+    const res = await fetch('/api/backups/restore', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ backupId }),
+    })
+    const data = await res.json()
+    if (res.ok && data.backup) {
+      return data.backup.data
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// Restore a cloud backup
+export async function restoreCloudBackup(token: string, backupId: string): Promise<boolean> {
+  try {
+    // Create a backup of current state before restoring
+    await createCloudBackup(token)
+
+    // Get the backup data
+    const backupData = await getCloudBackupData(token, backupId)
+    if (!backupData) return false
+
+    localStorage.setItem('testRecords', JSON.stringify(backupData))
+
     // Clear stale analysis cache
-    backup.data.forEach((r: any) => {
+    backupData.forEach((r: any) => {
       localStorage.removeItem(`analysis-${r.id}`)
     })
-    
+
     return true
   } catch {
     return false
   }
 }
 
-export function deleteBackup(backupId: string): void {
-  const backups = getBackups().filter(b => b.id !== backupId)
-  localStorage.setItem(BACKUP_KEY, JSON.stringify(backups))
+// Delete a cloud backup
+export async function deleteCloudBackup(token: string, backupId: string): Promise<boolean> {
+  try {
+    const res = await fetch('/api/backups', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ backupId }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
 }
 
 // ===== SYNC FUNCTIONS =====
 
 // Helper: push ALL local test records to cloud (full sync)
-// Uses fullSync=true so cloud matches local exactly (deletes records removed locally)
 export async function pushToCloud(token: string): Promise<{ success: boolean; count: number }> {
   try {
     const records = JSON.parse(localStorage.getItem('testRecords') || '[]')
@@ -176,7 +227,7 @@ export async function pushToCloud(token: string): Promise<{ success: boolean; co
   }
 }
 
-// Helper: pull cloud records and MERGE with local (local wins on duplicate ID to preserve local changes)
+// Helper: pull cloud records and MERGE with local (local wins on duplicate ID)
 export async function pullFromCloud(token: string): Promise<{ success: boolean; cloudCount: number; localCount: number; totalCount: number; newFromCloud: number }> {
   try {
     const res = await fetch('/api/test-records', {
@@ -190,14 +241,13 @@ export async function pullFromCloud(token: string): Promise<{ success: boolean; 
       const cloudRecords: any[] = data.records.map((r: any) => recalculateRecord(r))
       const cloudCount = cloudRecords.length
 
-      // Merge: local first (takes priority on same ID to preserve local changes), then cloud-only records
+      // Merge: local first (takes priority on same ID), then cloud-only records
       const merged = [...localRecords, ...cloudRecords]
       const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
-      
-      // Count how many new records came from cloud
+
       const localIds = new Set(localRecords.map((r: any) => r.id))
       const newFromCloud = cloudRecords.filter((r: any) => !localIds.has(r.id)).length
-      
+
       localStorage.setItem('testRecords', JSON.stringify(unique))
 
       return { success: true, cloudCount, localCount, totalCount: unique.length, newFromCloud }
@@ -209,10 +259,8 @@ export async function pullFromCloud(token: string): Promise<{ success: boolean; 
 }
 
 // Helper: merge local + cloud data properly (local wins on conflict)
-// Used on login to ensure no data loss
 export async function mergeLocalAndCloud(token: string): Promise<{ success: boolean; localCount: number; cloudCount: number; totalCount: number; newFromCloud: number }> {
   try {
-    // Step 1: Get cloud records
     const res = await fetch('/api/test-records', {
       headers: { 'Authorization': `Bearer ${token}` },
     })
@@ -227,17 +275,16 @@ export async function mergeLocalAndCloud(token: string): Promise<{ success: bool
     const cloudRecords: any[] = data.records.map((r: any) => recalculateRecord(r))
     const cloudCount = cloudRecords.length
 
-    // Merge: local first (preserves local versions on conflict), then add cloud-only records
+    // Merge: local first (preserves local versions on conflict)
     const merged = [...localRecords, ...cloudRecords]
     const unique = Array.from(new Map(merged.map((r: any) => [r.id, r])).values())
-    
+
     const localIds = new Set(localRecords.map((r: any) => r.id))
     const newFromCloud = cloudRecords.filter((r: any) => !localIds.has(r.id)).length
 
-    // Save merged result locally
     localStorage.setItem('testRecords', JSON.stringify(unique))
 
-    // Step 2: Push merged result to cloud (so cloud also has the full merged set)
+    // Push merged result to cloud
     await fetch('/api/test-records', {
       method: 'POST',
       headers: {
@@ -253,7 +300,7 @@ export async function mergeLocalAndCloud(token: string): Promise<{ success: bool
   }
 }
 
-// Helper: push a single test record to cloud (upsert only, NO deletion of other records)
+// Helper: push a single test record to cloud
 export async function pushSingleRecord(token: string, record: any): Promise<boolean> {
   try {
     const res = await fetch('/api/test-records', {
@@ -262,7 +309,6 @@ export async function pushSingleRecord(token: string, record: any): Promise<bool
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,
       },
-      // NO fullSync flag — this only upserts the single record without deleting others
       body: JSON.stringify({ records: [record] }),
     })
     return res.ok
@@ -304,10 +350,7 @@ export async function hasCloudData(token: string): Promise<boolean> {
 // Helper: full 2-way sync — push local to cloud, then pull cloud to local
 export async function fullSync(token: string): Promise<{ success: boolean; pushedCount: number; pulledCount: number; totalCount: number }> {
   try {
-    // Step 1: Push all local records to cloud (fullSync=true to match local state)
     const pushResult = await pushToCloud(token)
-    
-    // Step 2: Pull cloud records and merge
     const pullResult = await pullFromCloud(token)
 
     return {
